@@ -1,0 +1,11 @@
+# 複製成 terraform.tfvars 後填入。這個檔案沒有機密，可以 commit。
+# 兩個 ID 用這行查：gh api repos/OWNER/REPO --jq '.owner.id, .id'
+
+github_owner         = "your-github-username"
+github_owner_id      = "1234567"
+github_repo          = "aws-infra"
+github_repository_id = "987654321"
+
+# region        = "ap-northeast-1"
+# apply_branch  = "main"
+# workflow_file = ".github/workflows/opentofu.yml"

@@ -1,0 +1,70 @@
+name: opentofu
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - ".github/workflows/opentofu.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - ".github/workflows/opentofu.yml"
+
+permissions:
+  contents: read
+  id-token: write # 讓 job 能向 GitHub 取得 OIDC token，換 AWS 臨時憑證
+
+concurrency:
+  group: opentofu-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-1
+  TOFU_VERSION: "~1.10"
+
+defaults:
+  run:
+    working-directory: infra
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+
+      - run: tofu fmt -check -recursive
+      - run: tofu init -input=false
+      - run: tofu validate
+      - run: tofu plan -input=false -lock-timeout=5m
+
+  apply:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # 不要在這個 job 加 environment:。加了之後 OIDC 的 sub 會變成
+    # repo:OWNER/REPO:environment:NAME，apply 角色的信任政策就不會符合。
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_APPLY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+
+      - run: tofu init -input=false
+      - run: tofu plan -input=false -lock-timeout=5m -out=tfplan
+      - run: tofu apply -input=false -lock-timeout=5m tfplan

@@ -1,0 +1,6 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+tfplan
+crash.log
+# .terraform.lock.hcl 要 commit，鎖定 provider 版本
