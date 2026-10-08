@@ -135,7 +135,7 @@ CloudShell 的家目錄只有 1 GB，Makefile 已把 provider 放到 `/tmp`。Op
 
 | 項目 | 內容 |
 | --- | --- |
-| instance | organization instance，位於 `ap-east-2`（台北） |
+| instance | organization instance `ssoins-0123456789abcdef`，位於 `ap-east-2`（台北），組織 `o-exampleorgid` |
 | 使用者 | `miskawu`（you@example.com），屬於 `admins` 群組 |
 | 權限組合 | `ReadOnly`（ReadOnlyAccess，工作階段 8 小時）、`Administrator`（AdministratorAccess，4 小時） |
 | 指派 | `admins` 群組在本帳號可使用上面兩個權限組合 |
@@ -151,7 +151,7 @@ Identity Center 的 organization instance 依官方文件只能在主控台啟�
 3. 「Enable multi-account permissions」保持**開啟**。關掉的話不能用它登入 AWS 帳號。
 4. 出現「Enable IAM Identity Center with AWS Organizations」頁面時按「啟用」。
 5. 到 Settings → Authentication → Standard authentication → Configure，勾選 **Send email OTP** 後儲存。少了這一步，用 OpenTofu 建立的使用者收不到設定密碼的信。
-6. （可選）在 Settings 把 AWS access portal 的網址改成好記的名稱，例如 `https://miskawu.awsapps.com/start`。
+6. （可選）在 Settings 把 AWS access portal 的網址改成好記的名稱。目前的網址是 `https://d-0123456789.awsapps.com/start`，改了之後下面 `~/.aws/config` 的 `sso_start_url` 也要跟著改。
 
 MFA 不用另外設定：新的 instance 預設第一次登入就要註冊 MFA，建議註冊 passkey 或實體安全金鑰。
 
@@ -161,11 +161,11 @@ Identity Center 的區域之後**不能直接更改**，要換只能刪掉重建
 
 1. 合併 `infra/identity-center.tf` 的 PR，CI 會建立使用者、群組、權限組合和指派。
 2. 打開 access portal 網址，用 `miskawu` 登入。系統會寄驗證信到 you@example.com，設定密碼並註冊 MFA。
-3. 本機設定 `~/.aws/config`，`sso_start_url` 換成你的 access portal 網址：
+3. 本機設定 `~/.aws/config`：
 
    ```ini
    [sso-session miskawu]
-   sso_start_url = https://miskawu.awsapps.com/start
+   sso_start_url = https://d-0123456789.awsapps.com/start
    sso_region = ap-east-2
    sso_registration_scopes = sso:account:access
 
