@@ -7,6 +7,7 @@ bootstrap/   一次性：GitHub OIDC 提供者、兩個部署角色、state buck
 infra/       之後所有資源都寫在這裡，由 GitHub Actions 部署。
 Makefile     安裝 OpenTofu（make tofu）、更新鎖檔（make lock）、在 CloudShell 套用 bootstrap（make plan / apply / migrate）。
 .opentofu-version                OpenTofu 版本，本機、CloudShell、CI 都照這個檔安裝。
+.opentofu-checksums              該版本各平台安裝檔的 SHA256，安裝時比對。
 .github/workflows/opentofu.yml   PR 跑 plan，main 跑 apply。
 ```
 
@@ -16,12 +17,15 @@ OpenTofu 本身和 provider 都鎖在 repo 裡，不依賴各台機器上剛好�
 
 | 鎖什麼 | 寫在哪 | 誰讀 |
 | --- | --- | --- |
-| OpenTofu 版本 | `.opentofu-version` | `make tofu`、CI 的 `setup-opentofu`（`tofu_version_file`） |
+| OpenTofu 版本 | `.opentofu-version` | `make tofu`、CI 的 `setup-opentofu`（`tofu_version`） |
+| OpenTofu 安裝檔雜湊 | `.opentofu-checksums` | `make tofu`、CI 的 `setup-opentofu`（`checksums`） |
 | provider 版本與雜湊 | `bootstrap/.terraform.lock.hcl`、`infra/.terraform.lock.hcl` | `tofu init` |
 
-`make tofu` 把指定版本裝到 `~/.cache/opentofu/<版本>/tofu`，不需要 root，也不碰 PATH 上原本的 `tofu`；已經裝過就直接略過。之後的 `make` 指令都用這一支。
+`make tofu` 從 GitHub releases 下載該版本的 zip，和 `.opentofu-checksums` 比對雜湊，相符才裝到 `~/.cache/opentofu/<版本>/tofu`。不需要 root、GnuPG 或 cosign，也不碰 PATH 上原本的 `tofu`；已經裝過就直接略過。之後的 `make` 指令都用這一支。
 
-- **升級 OpenTofu**：改 `.opentofu-version`，開 PR。CI 會照新版本跑 plan，本機下次 `make` 會自動裝新版，舊版留在原目錄不受影響。
+雜湊檔的可信度來自官方簽章，但簽章只在升級時驗一次：`make tofu-pin` 下載官方的 SHA256SUMS 和簽章，只接受主金鑰指紋為 `E3E6E43D84CB852EADB0051D0C0AF313E5FD9F80`（寫在 `Makefile`）的簽章，驗過才寫入 `.opentofu-checksums`。和 provider 鎖檔一樣，雜湊的變更會出現在 PR diff 裡。
+
+- **升級 OpenTofu**：改 `.opentofu-version`，在本機執行 `make tofu-pin`（需要完整版 GnuPG），把兩個檔一起開 PR。CI 會照新版本跑 plan，本機與 CloudShell 下次 `make` 會自動裝新版，舊版留在原目錄不受影響。
 - **更新 provider 鎖檔**：`make lock`。改了 `versions.tf` 的版本限制，或要多支援一個平台（`Makefile` 的 `LOCK_PLATFORMS`）時執行，然後 commit 兩個鎖檔。AWS provider 每個平台解開約 700 MB，暫存目錄空間不夠時（例如 WSL 的 `/tmp` 是記憶體 tmpfs）改用磁碟：`TMPDIR=$(mktemp -d -p ~/.cache) make lock`。
 - 想在 shell 直接打 `tofu`，可以裝 [tenv](https://github.com/tofuutils/tenv)，它會自動讀 `.opentofu-version`。
 
@@ -96,7 +100,7 @@ plan 角色把最後一條換成 `ref` 必須是 `refs/pull/*/merge`，用來排
    make plan
    ```
 
-   輸出應該只有 OIDC 提供者、兩個角色及其政策、state bucket 相關資源。安裝程式會用 cosign 或 GnuPG 驗證 OpenTofu 的簽章；如果它說兩者都沒有，先 `sudo dnf install -y gnupg2` 再重跑。
+   輸出應該只有 OIDC 提供者、兩個角色及其政策、state bucket 相關資源。OpenTofu 由 `make` 依 `.opentofu-checksums` 驗證後安裝，CloudShell 不需要另外裝任何套件。
 
 4. 確認無誤後套用，再把 bootstrap 自己的 state 搬進剛建好的 bucket：
 

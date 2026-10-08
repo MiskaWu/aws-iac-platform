@@ -5,12 +5,14 @@ on:
     paths:
       - "infra/**"
       - ".opentofu-version"
+      - ".opentofu-checksums"
       - ".github/workflows/opentofu.yml"
   push:
     branches: [main]
     paths:
       - "infra/**"
       - ".opentofu-version"
+      - ".opentofu-checksums"
       - ".github/workflows/opentofu.yml"
 
 permissions:
@@ -40,13 +42,21 @@ jobs:
           role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # 版本和安裝檔雜湊都從 repo 讀，和 make tofu 比對同一份；讀不到就在這裡失敗。
+      # runner 是 ubuntu-latest，所以取 linux_amd64 的雜湊。
+      - id: tofu
+        run: |
+          version="$(cat ../.opentofu-version)"
+          sum="$(awk -v f="tofu_${version}_linux_amd64.zip" '$2 == f { print $1 }' ../.opentofu-checksums)"
+          test -n "$sum"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "checksum=$sum" >> "$GITHUB_OUTPUT"
+
       - uses: opentofu/setup-opentofu@v2
         with:
-          # 和 Makefile 讀同一個檔，本機、CloudShell、CI 用同一版
-          tofu_version_file: .opentofu-version
+          tofu_version: ${{ steps.tofu.outputs.version }}
+          checksums: ${{ steps.tofu.outputs.checksum }}
 
-      # 讀不到版本檔時 action 只發警告、改裝 latest，在這裡擋下
-      - run: tofu version | grep -xF "OpenTofu v$(cat ../.opentofu-version)" >/dev/null
       - run: tofu fmt -check -recursive
       - run: tofu init -input=false
       - run: tofu validate
@@ -65,13 +75,21 @@ jobs:
           role-to-assume: ${{ vars.AWS_APPLY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # 版本和安裝檔雜湊都從 repo 讀，和 make tofu 比對同一份；讀不到就在這裡失敗。
+      # runner 是 ubuntu-latest，所以取 linux_amd64 的雜湊。
+      - id: tofu
+        run: |
+          version="$(cat ../.opentofu-version)"
+          sum="$(awk -v f="tofu_${version}_linux_amd64.zip" '$2 == f { print $1 }' ../.opentofu-checksums)"
+          test -n "$sum"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "checksum=$sum" >> "$GITHUB_OUTPUT"
+
       - uses: opentofu/setup-opentofu@v2
         with:
-          # 和 Makefile 讀同一個檔，本機、CloudShell、CI 用同一版
-          tofu_version_file: .opentofu-version
+          tofu_version: ${{ steps.tofu.outputs.version }}
+          checksums: ${{ steps.tofu.outputs.checksum }}
 
-      # 讀不到版本檔時 action 只發警告、改裝 latest，在這裡擋下
-      - run: tofu version | grep -xF "OpenTofu v$(cat ../.opentofu-version)" >/dev/null
       - run: tofu init -input=false
       - run: tofu plan -input=false -lock-timeout=5m -out=tfplan
       - run: tofu apply -input=false -lock-timeout=5m tfplan
