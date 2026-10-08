@@ -1,7 +1,7 @@
 variable "region" {
-  description = "State bucket 所在區域，也是 provider 的預設區域。IAM 是全域服務，不受這個值影響。"
+  description = "State bucket 所在區域，也是 provider 的預設區域。IAM 是全域服務，不受這個值影響。ap-east-2（台北）是需要手動啟用的區域。"
   type        = string
-  default     = "ap-northeast-1"
+  default     = "ap-east-2"
 }
 
 variable "github_owner" {

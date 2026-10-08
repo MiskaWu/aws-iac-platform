@@ -22,7 +22,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: ap-northeast-1
+  AWS_REGION: ap-east-2
 
 defaults:
   run:

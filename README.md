@@ -25,6 +25,14 @@ OpenTofu 本身和 provider 都鎖在 repo 裡，不依賴各台機器上剛好�
 - **更新 provider 鎖檔**：`make lock`。改了 `versions.tf` 的版本限制，或要多支援一個平台（`Makefile` 的 `LOCK_PLATFORMS`）時執行，然後 commit 兩個鎖檔。AWS provider 每個平台解開約 700 MB，暫存目錄空間不夠時（例如 WSL 的 `/tmp` 是記憶體 tmpfs）改用磁碟：`TMPDIR=$(mktemp -d -p ~/.cache) make lock`。
 - 想在 shell 直接打 `tofu`，可以裝 [tenv](https://github.com/tofuutils/tenv)，它會自動讀 `.opentofu-version`。
 
+## 區域
+
+預設區域是 `ap-east-2`（台北），寫在 `bootstrap/terraform.tfvars` 和 `infra/versions.tf`。客群是台灣和日本；台北的主機、硬碟、S3 是東京的九折，資料傳出網路是九五折。
+
+台北是需要手動啟用的區域，而且**沒有 CloudShell**。所以 CloudShell 要在東京（`ap-northeast-1`）開，bucket 仍會建在台北，因為 provider 的區域是看 `region` 變數，不是看 CloudShell 在哪。
+
+之後如果某個服務台北沒有，可以在 `infra/` 加一個指向東京的 provider alias，只把那個資源放東京。跨區傳輸台北到東京每 GB $0.08、東京到台北每 GB $0.09。
+
 ## bootstrap 會建立什麼
 
 | 資源 | 名稱 | 誰能用 | 權限 |
@@ -32,7 +40,7 @@ OpenTofu 本身和 provider 都鎖在 repo 裡，不依賴各台機器上剛好�
 | OIDC 身分提供者 | token.actions.githubusercontent.com | — | 讓 AWS 信任 GitHub Actions 發的 token |
 | IAM 角色 | `github-tofu-apply` | 指定 repo、`main` 分支、`opentofu.yml` 這個 workflow | AdministratorAccess |
 | IAM 角色 | `github-tofu-plan` | 指定 repo 的 `pull_request` 事件 | ReadOnlyAccess + 寫入 infra state 鎖檔 |
-| S3 bucket | `tofu-state-123456789012-ap-northeast-1` | 上面兩個角色 | 版本控制、加密、封鎖公開、只接受 TLS |
+| S3 bucket | `tofu-state-123456789012-ap-east-2`（台北） | 上面兩個角色 | 版本控制、加密、封鎖公開、只接受 TLS |
 
 權限大小是靠信任政策（誰能扮演角色）鎖住的。apply 角色要同時符合四個條件：
 
@@ -55,7 +63,7 @@ plan 角色把最後一條換成 `ref` 必須是 `refs/pull/*/merge`，用來排
 
 ### 2. CloudShell 套用
 
-在 AWS console 用 root 登入，右上角區域切到 `ap-northeast-1`（東京），打開 CloudShell。
+在 AWS console 用 root 登入，右上角區域切到 `ap-northeast-1`（東京），打開 CloudShell。台北沒有 CloudShell，見「區域」。
 
 1. 取得程式碼。repo 是私有的，所以用一把唯讀的 deploy key：
 
@@ -73,7 +81,16 @@ plan 角色把最後一條換成 `ref` 必須是 `refs/pull/*/merge`，用來排
 
    第一次連線會問 GitHub 的主機指紋，對照 GitHub 文件公布的 ED25519 指紋後回答 `yes`。
 
-2. 產生計畫並檢查：
+2. 啟用台北區。只需要做一次，通常幾分鐘內完成：
+
+   ```sh
+   make enable-region
+   make region-check    # 顯示 ENABLED 才繼續；ENABLING 就等幾分鐘再跑
+   ```
+
+   也可以在 console 右上角帳號選單 →「帳戶」→「AWS 區域」手動啟用「亞太地區（台北）」。
+
+3. 產生計畫並檢查：
 
    ```sh
    make plan
@@ -81,7 +98,7 @@ plan 角色把最後一條換成 `ref` 必須是 `refs/pull/*/merge`，用來排
 
    輸出應該只有 OIDC 提供者、兩個角色及其政策、state bucket 相關資源。安裝程式會用 cosign 或 GnuPG 驗證 OpenTofu 的簽章；如果它說兩者都沒有，先 `sudo dnf install -y gnupg2` 再重跑。
 
-3. 確認無誤後套用，再把 bootstrap 自己的 state 搬進剛建好的 bucket：
+4. 確認無誤後套用，再把 bootstrap 自己的 state 搬進剛建好的 bucket：
 
    ```sh
    make apply
@@ -91,7 +108,7 @@ plan 角色把最後一條換成 `ref` 必須是 `refs/pull/*/merge`，用來排
 
    `make migrate` 會先比對實際的 bucket 名稱和 `backend.tf.example` 是否一致，不一致就停下來。
 
-4. 到 GitHub 把 deploy key 刪掉，並在 CloudShell 執行 `rm -f ~/.ssh/aws-iac ~/.ssh/aws-iac.pub`。
+5. 到 GitHub 把 deploy key 刪掉，並在 CloudShell 執行 `rm -f ~/.ssh/aws-iac ~/.ssh/aws-iac.pub`。
 
 CloudShell 的家目錄只有 1 GB，Makefile 已把 provider 放到 `/tmp`。OpenTofu 本身約 110 MB，裝在家目錄的 `~/.cache/opentofu`，工作階段重開後還在；`/tmp` 會被清掉，但 `make` 會自動重新 init，不必手動處理。
 
@@ -123,4 +140,5 @@ CloudShell 的家目錄只有 1 GB，Makefile 已把 provider 放到 `/tmp`。Op
 - **plan 角色看得到帳號裡所有可讀的東西**，包含 S3 物件內容。它只接受 `pull_request` 事件。如果 repo 是私有的，不要開啟「Send write tokens to workflows from fork pull requests」，否則 fork 的 PR 也可能拿到 OIDC token。
 - **state bucket 設了 `prevent_destroy`**，誤下 `tofu destroy` 會被擋下。
 - **費用**：OIDC 提供者和 IAM 角色不收費；state 檔只有幾 KB，S3 月費趨近 0。
+- **出現 `Invalid AWS Region: ap-east-2`** 表示 OpenTofu 或 provider 版本太舊、不認得台北區。照「工具版本」升級 `.opentofu-version` 或重跑 `make lock`。台北區在 2025 年 6 月開放，之後發布的版本都應該認得。
 - **root 進不了這兩個角色**（root 不能切換角色）。本機要直接操作時，另外啟用 IAM Identity Center 建自己的管理員身分。
