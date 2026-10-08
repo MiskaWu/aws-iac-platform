@@ -80,7 +80,7 @@ cmd="${1:-}"
 shift || true
 case "$cmd" in
   up)
-    "${PODMAN[@]}" build -q -t "$IMAGE" "$HERE" >/dev/null
+    "${PODMAN[@]}" build -q -t "$IMAGE" --build-arg "PACKAGES=$(grep -v -e '^#' -e '^[[:space:]]*$' "$REPO/infra/host/packages.txt" | xargs)" "$HERE" >/dev/null
     running || start
     platform_sync
     ;;

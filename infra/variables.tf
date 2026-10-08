@@ -47,6 +47,12 @@ variable "host_availability_zone" {
   default     = "ap-east-2a"
 }
 
+variable "host_generation" {
+  description = "主機的代數。加一就換一台新主機（新的 AMI、新的 cloud-init 都靠換主機生效），資料碟與 Elastic IP 不變。"
+  type        = number
+  default     = 1
+}
+
 variable "host_data_volume_gb" {
   description = "/srv 資料碟的大小（GB）。只能加大，不能縮小。"
   type        = number

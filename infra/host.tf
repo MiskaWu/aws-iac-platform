@@ -23,6 +23,14 @@ data "aws_ec2_instance_type_offerings" "host" {
   }
 }
 
+locals {
+  # infra/host/packages.txt：一行一個套件，# 開頭是註解
+  host_packages = [
+    for line in split("\n", file("${path.module}/host/packages.txt")) : trimspace(line)
+    if trimspace(line) != "" && !startswith(trimspace(line), "#")
+  ]
+}
+
 # ---------- IAM ----------
 
 data "aws_iam_policy_document" "host_trust" {
@@ -122,6 +130,13 @@ resource "aws_ebs_volume" "data" {
 
 # ---------- 主機 ----------
 
+# 換主機的開關：terraform.tfvars 的 host_generation 加一，開 PR，合併後 CI 就換一台新主機
+# （資料碟、Elastic IP 留著；新主機的 PlatformSync 會把已部署的專案從 /srv 裝回來）。
+# 這個資源第一次建立時也會觸發一次替換。
+resource "terraform_data" "host_generation" {
+  input = var.host_generation
+}
+
 resource "aws_instance" "host" {
   ami                    = data.aws_ssm_parameter.ubuntu.insecure_value
   instance_type          = var.host_instance_type
@@ -150,11 +165,14 @@ resource "aws_instance" "host" {
     auto_recovery = "default" # 硬體故障時自動搬到新的實體主機，IP 與資料碟不變
   }
 
-  disable_api_termination = true
+  # 主機本身可以換掉（狀態都在 /srv 資料碟），所以不開防誤刪：換主機是 tofu apply -replace=aws_instance.host。
+  # 不能刪的是資料碟與 Elastic IP，它們有 prevent_destroy。
+  disable_api_termination = false
 
   user_data = templatefile("${path.module}/host/cloud-init.yaml.tftpl", {
     data_volume_id = aws_ebs_volume.data.id
     mount_script   = file("${path.module}/host/mount-data.sh")
+    packages       = local.host_packages
   })
 
   tags = {
@@ -163,7 +181,8 @@ resource "aws_instance" "host" {
 
   lifecycle {
     # AMI 有新版、cloud-init 改了都不重建主機；平台設定的更新走 PlatformSync
-    ignore_changes = [ami, user_data]
+    ignore_changes       = [ami, user_data]
+    replace_triggered_by = [terraform_data.host_generation]
 
     precondition {
       condition     = length(data.aws_ec2_instance_type_offerings.host.instance_types) > 0

@@ -75,8 +75,13 @@ ECR：每個專案一個倉庫　Parameter Store：/<專案>/<名稱>　S3：部
   SSM 的環境沒有 `/snap/bin`：用 `aws` 之前先 `export PATH="$PATH:/snap/bin"`。
 - **改平台**（`infra/host/platform/` 底下任何檔案）：開 PR、合併。OpenTofu 上傳新檔案，association 的 `revision` 變了就重跑，
   `install.sh` 只換有變的檔案：edge 的單元或 podman 設定變了才重啟 edge-caddy，只有 Caddyfile 變了就 reload。
-- **換主機**（換 AMI、主機壞了）：`tofu apply -replace=aws_instance.host`（要先在 PR 裡把 `disable_api_termination` 暫時關掉）。
+- **換主機**（換 AMI、cloud-init 改了、主機壞了或失聯）：`infra/terraform.tfvars` 的 `host_generation` 加一，開 PR、看 plan
+  （應該是主機與它的掛載、Elastic IP 的關聯被替換，資料碟、Elastic IP 不動）、合併。主機沒有開防誤刪：
+  它本來就可以換掉，不能刪的資料碟與 Elastic IP 有 `prevent_destroy`。
 - **cloud-init 改了**：只對新主機有效（`user_data` 在 `ignore_changes` 裡），要套用就換主機。
+- **不要在主機上裝 Docker**：它一啟動就把 iptables 的 FORWARD 設成 DROP，podman 容器進出的封包全被丟掉。
+  主機的 apt 設定成不裝推薦套件（`/etc/apt/apt.conf.d/90platform-no-recommends`），`install.sh` 檢查到 Docker 會停下來。
+  不要用 `apt-get autoremove` 清套件：這台主機的 SSM agent 是 snap，連帶拆掉 snapd 就失聯了（下面的事故紀錄）。
 
 ## 本機演練：主機模擬器
 
@@ -85,8 +90,10 @@ ECR：每個專案一個倉庫　Parameter Store：/<專案>/<名稱>　S3：部
 S3 與 Parameter Store 是本機的資料夾。平台的改動與各專案的部署包都先在這裡跑一次（指令見檔案開頭）。
 
 和正式環境的差別：沒有 ECR、IAM、IMDS；沒有經過 cloud-init（`/srv` 是掛進來的資料夾）；防火牆用 iptables
-（WSL 的核心沒有 `nft_fib_inet`，正式主機照預設用 nftables）。模擬器的套件清單和 cloud-init 一致、而且不裝推薦套件，
-漏了什麼會在模擬器先壞（`aardvark-dns` 就是這樣抓到的：它只是 podman 的推薦套件，沒有它容器之間不能用名稱互找）。
+（WSL 的核心沒有 `nft_fib_inet`，正式主機照預設用 nftables）。**套件清單只有一份**（`infra/host/packages.txt`，
+cloud-init 與模擬器都讀它），apt 的設定也一樣不裝推薦套件，所以正式主機少了或多了什麼，模擬器會先看到
+（`aardvark-dns` 就是這樣抓到的：它只是 podman 的推薦套件，沒有它容器之間不能用名稱互找）。
+模擬器預設用 28080／28443，被占用時用 `HOST_SIM_HTTP`、`HOST_SIM_HTTPS` 換。
 
 2026-10-08 用 ouin-fx 的部署包驗過：部署、SSE 經過 edge-caddy、資料庫不在 `edge` 上、每日備份、換主機後專案自己回來
 （資料與市場種子都在）、壞的站台檔與不合約定的檔名整包不生效。
@@ -103,3 +110,16 @@ S3 與 Parameter Store 是本機的資料夾。平台的改動與各專案的部
 - [ ] 主機上 `aws s3 rm s3://platform-backups-…/<專案>/<某個備份>` 被拒。
 - [ ] ECR 的生命週期規則：推過幾次之後 `aws ecr start-lifecycle-policy-preview --repository-name <專案>` 看會清掉什麼，manifest list 引用的子映像不應該在裡面。
 - [ ] 費用（台北）：t4g.small 約 US$14／月、EBS 30 GB 約 US$3、公開 IPv4 約 US$3.6、快照、ECR、S3 約 US$1–2，合計約 US$22。
+
+## 事故紀錄
+
+### 2026-10-08：Docker 讓容器網路失效，移除時主機失聯
+
+- **症狀**：第一次部署 ouin-fx 之後，外面連 80、443 逾時，edge-caddy 連不到 Let's Encrypt。
+- **原因**：cloud-init 的 `packages` 會連推薦套件一起裝，`amazon-ecr-credential-helper` 推薦 `docker.io`，
+  Docker 一啟動就把 iptables 的 FORWARD 設成 DROP。模擬器不裝推薦套件，所以沒有重現——兩邊的套件策略不一樣。
+- **處理時又出錯**：用 `apt-get autoremove` 加 `APT::AutoRemove::RecommendsImportant=false` 清 Docker 帶進來的套件，
+  這個選項會移除所有「只因為被推薦才裝」的套件，連 snapd 一起拆掉，snap 裝的 SSM agent 停了，主機失聯（沒有 SSH）。
+- **修正**：套件清單改成一份（`packages.txt`）、正式主機與模擬器都不裝推薦套件；`install.sh` 檢查到 Docker 就停下來、
+  不自動移除；主機改成用 `host_generation` 走 PR 換掉，失聯的主機直接換一台（資料在 `/srv`，換主機不會掉）。
+

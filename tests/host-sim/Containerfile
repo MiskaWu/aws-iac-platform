@@ -1,11 +1,14 @@
 # 主機模擬器：和正式主機同一版 Ubuntu 與 podman，跑同一份平台腳本（infra/host/platform/）。
 # aws 指令換成 fake-aws：S3 與 Parameter Store 是掛進來的資料夾。
 FROM docker.io/library/ubuntu:26.04
-# 平台的套件和 infra/host/cloud-init.yaml.tftpl 一致（podman aardvark-dns amazon-ecr-credential-helper），
-# 而且不裝推薦套件：正式主機少了什麼，這裡會先壞掉。後面一排是模擬器自己要的。
-RUN apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-       podman aardvark-dns amazon-ecr-credential-helper \
+# 平台的套件和正式主機是同一份清單（infra/host/packages.txt，run.sh 傳進來），apt 的設定也一樣：不裝推薦套件
+# （cloud-init.yaml.tftpl 寫的 90platform-no-recommends）。正式主機少了或多了什麼，這裡會先看到。
+# 後面一排是模擬器自己要的。
+ARG PACKAGES
+RUN test -n "$PACKAGES" \
+    && printf 'APT::Install-Recommends "false";\nAPT::Install-Suggests "false";\n' > /etc/apt/apt.conf.d/90platform-no-recommends \
+    && apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y $PACKAGES \
        systemd systemd-sysv dbus python3 ca-certificates curl iproute2 iptables \
     && rm -rf /var/lib/apt/lists/*
 # 只有模擬器：WSL 的核心沒有 nft_fib_inet，netavark 的 nftables 規則（fib daddr type local）套不上，改走 iptables。

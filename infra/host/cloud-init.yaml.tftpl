@@ -3,6 +3,11 @@
 # 其餘的設定由 SSM 的 PlatformSync 套用（infra/ssm.tf），它會等這份跑完才開始。
 
 write_files:
+  # write_files 在裝套件之前執行：之後在這台主機上 apt 裝任何東西都不帶推薦套件
+  - path: /etc/apt/apt.conf.d/90platform-no-recommends
+    content: |
+      APT::Install-Recommends "false";
+      APT::Install-Suggests "false";
   - path: /etc/platform/data-volume-id
     content: "${data_volume_id}\n"
   - path: /usr/local/sbin/mount-data
@@ -10,12 +15,8 @@ write_files:
     content: ${jsonencode(mount_script)}
 
 package_update: true
-# 這份清單和 tests/host-sim/Containerfile 一致；模擬器不裝推薦套件，漏了什麼會在那裡先壞掉。
-# aardvark-dns 只是 podman 的推薦套件，但沒有它容器之間不能用名稱互找（edge-caddy 找不到各專案的服務）。
-packages:
-  - podman
-  - aardvark-dns
-  - amazon-ecr-credential-helper
+# infra/host/packages.txt（主機模擬器讀同一份）
+packages: ${jsonencode(packages)}
 
 snap:
   commands:

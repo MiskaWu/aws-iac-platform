@@ -16,6 +16,12 @@ die() {
 
 mountpoint -q /srv || die "/srv 沒有掛上，不套用（cloud-init 的 mount-data 失敗了？）"
 
+# 主機上不能有 Docker：它一啟動就把 iptables 的 FORWARD 設成 DROP，podman 容器進出的封包全被丟掉。
+# 只檢查、不自動移除（2026-10-08 自動移除時連帶拆掉了 snapd 與 SSM agent）：要人看過再處理，或直接換主機。
+if dpkg-query -W -f='${db:Status-Abbrev}' docker.io docker-ce 2>/dev/null | grep -q '^ii'; then
+  die "主機上裝了 Docker（docker.io／docker-ce），會讓 podman 的容器網路失效。不要在這台主機上裝 Docker；已經裝了就換主機（docs/host-platform.md）"
+fi
+
 changed=() # 內容有變的目的地
 put() {    # put <來源> <目的地> <權限>
   if ! cmp -s "$1" "$2"; then
