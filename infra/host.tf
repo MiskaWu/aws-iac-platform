@@ -158,7 +158,7 @@ resource "aws_instance" "host" {
   }
 
   credit_specification {
-    cpu_credits = "standard" # 超過基準就降速，不會多收錢
+    cpu_credits = var.host_cpu_credits
   }
 
   maintenance_options {

@@ -78,6 +78,7 @@ ECR：每個專案一個倉庫　Parameter Store：/<專案>/<名稱>　S3：部
 - **換主機**（換 AMI、cloud-init 改了、主機壞了或失聯）：`infra/terraform.tfvars` 的 `host_generation` 加一，開 PR、看 plan
   （應該是主機與它的掛載、Elastic IP 的關聯被替換，資料碟、Elastic IP 不動）、合併。主機沒有開防誤刪：
   它本來就可以換掉，不能刪的資料碟與 Elastic IP 有 `prevent_destroy`。
+- **流量可能突然變大**（例如在社群發文）：`host_cpu_credits = "unlimited"`，CPU 用完額度也不降速，長時間超過基準的部分另外計費；平常改回 `standard`。改這個不會換主機。
 - **cloud-init 改了**：只對新主機有效（`user_data` 在 `ignore_changes` 裡），要套用就換主機。
 - **不要在主機上裝 Docker**：它一啟動就把 iptables 的 FORWARD 設成 DROP，podman 容器進出的封包全被丟掉。
   主機的 apt 設定成不裝推薦套件（`/etc/apt/apt.conf.d/90platform-no-recommends`），`install.sh` 檢查到 Docker 會停下來。

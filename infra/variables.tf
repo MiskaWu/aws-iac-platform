@@ -41,6 +41,21 @@ variable "host_instance_type" {
   default     = "t4g.small"
 }
 
+variable "host_cpu_credits" {
+  description = <<-EOT
+    t4g 的 CPU 額度模式。standard：用完額度就降到基準（t4g.small 是 20%），不會多收錢。
+    unlimited：超過基準也不降速，長時間超過基準的部分按 vCPU 小時另外計費（平常低於基準就不多收）。
+    流量可能突然湧進來的時候（例如在社群發文）用 unlimited，平常用 standard。改這個不會換主機。
+  EOT
+  type        = string
+  default     = "standard"
+
+  validation {
+    condition     = contains(["standard", "unlimited"], var.host_cpu_credits)
+    error_message = "host_cpu_credits 只能是 standard 或 unlimited。"
+  }
+}
+
 variable "host_availability_zone" {
   description = "主機與資料碟所在的可用區域。EBS 只能掛在同一區的主機上，換主機時也要在這一區。"
   type        = string
