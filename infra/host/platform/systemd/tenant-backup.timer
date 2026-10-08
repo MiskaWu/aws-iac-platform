@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily tenant backups at 04:17 Asia/Taipei
+
+[Timer]
+OnCalendar=*-*-* 04:17:00 Asia/Taipei
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,23 @@
+# 共用入口：80/443 都在這裡，依 /srv/edge/caddy/sites/<專案>.caddy 反向代理到各專案。
+# 掛整個資料夾而不是單一檔案：Caddyfile 與站台檔被換掉後，reload 才讀得到新的內容。
+[Unit]
+Description=Shared entrypoint (Caddy)
+
+[Container]
+ContainerName=edge-caddy
+Image=docker.io/library/caddy:2.11.7
+Network=edge.network
+IP=172.30.0.2
+PublishPort=80:80
+PublishPort=443:443
+PublishPort=443:443/udp
+Volume=/srv/edge/caddy:/etc/caddy:ro
+Volume=/srv/edge/data:/data
+Volume=/srv/edge/config:/config
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target

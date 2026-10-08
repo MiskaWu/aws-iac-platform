@@ -4,7 +4,9 @@
 
 ```
 bootstrap/   一次性：GitHub OIDC 提供者、兩個部署角色、state bucket。手動套用，CI 不碰。
-infra/       之後所有資源都寫在這裡，由 GitHub Actions 部署。
+infra/       之後所有資源都寫在這裡，由 GitHub Actions 部署。目前有帳號安全基線、IAM Identity Center、多個專案共用的一台主機（docs/host-platform.md）。
+tests/       infra/ 的本機測試：host-sim 是主機模擬器（跑同一份主機平台腳本）。
+docs/        host-platform.md：共用主機的架構、專案的約定、日常操作。
 Makefile     安裝 OpenTofu（make tofu）、更新鎖檔（make lock）、在 CloudShell 套用 bootstrap（make plan / apply / migrate）。
 .opentofu-version                OpenTofu 版本，本機、CloudShell、CI 都照這個檔安裝。
 .opentofu-checksums              該版本各平台安裝檔的 SHA256，安裝時比對。

@@ -1,0 +1,8 @@
+# 共用入口的網路。名稱、位址段、caddy 的 IP 是各專案設定的一部分（docs/host-platform.md），不要改：
+# 專案的限流只信任 172.30.0.2 帶來的 X-Forwarded-For。
+# 動態分配只用後半段，誰先起來都搶不到 caddy 的 .2。
+[Network]
+NetworkName=edge
+Subnet=172.30.0.0/24
+Gateway=172.30.0.1
+IPRange=172.30.0.128/25

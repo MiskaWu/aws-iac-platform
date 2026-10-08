@@ -1,0 +1,160 @@
+#!/bin/bash
+# 部署一個專案（docs/host-platform.md「專案的約定」）。由 SSM 文件 TenantDeploy 以 root 執行。
+#
+#   tenant-deploy <專案>           從 s3://<部署 bucket>/<專案>/bundle.tar.gz 拿部署包
+#   tenant-deploy --local <專案>   用 /srv/<專案>/ 現有的內容（換主機之後由 install.sh 呼叫）
+#
+# 部署包：quadlet/（單元檔與這個環境的 drop-in）、site.caddy（填好網域的站台檔，選配）、backup.sh（選配）。
+set -euo pipefail
+export HOME=/root PATH="$PATH:/snap/bin" REGISTRY_AUTH_FILE=/etc/containers/platform-auth.json
+# shellcheck source=/dev/null
+. /usr/local/lib/platform/platform.env
+
+log() { echo "tenant-deploy: $*"; }
+die() {
+  echo "tenant-deploy: $*" >&2
+  exit 1
+}
+
+local_only=false
+if [[ "${1:-}" == --local ]]; then
+  local_only=true
+  shift
+fi
+p="${1:-}"
+[[ "$p" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "用法：tenant-deploy [--local] <專案>"
+[[ "$p" != edge && "$p" != containers ]] || die "$p 是平台保留的名稱"
+
+src="/srv/$p"
+dst="/etc/containers/systemd/$p"
+site="/srv/edge/caddy/sites/$p.caddy"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+# 先在暫存區把整包驗證完（結構、檔名、站台檔），才寫進 /srv/<專案>/ 與重啟服務：壞的部署包整包不生效，
+# /srv 裡的正本永遠是驗證過的那一份（換主機時 --local 會照它裝回來）。
+
+# 用候選的站台檔驗證整份 Caddy 設定，驗完馬上放回原本的：一個專案的站台檔不能弄壞所有專案
+check_site() { # check_site <候選的站台檔，或空字串表示不要站台>
+  local had=false ok=true
+  if [[ -f "$site" ]]; then
+    cp "$site" "$tmp/site.prev"
+    had=true
+  fi
+  if [[ -n "$1" ]]; then install -m 644 "$1" "$site"; else rm -f "$site"; fi
+  podman exec edge-caddy caddy validate --config /etc/caddy/Caddyfile >"$tmp/validate.log" 2>&1 || ok=false
+  if $had; then install -m 644 "$tmp/site.prev" "$site"; else rm -f "$site"; fi
+  $ok || cat "$tmp/validate.log" >&2
+  $ok
+}
+
+# ---------- 1. 部署包：解開、驗證、寫進 /srv/<專案>/ ----------
+if $local_only; then
+  stage="$src"
+else
+  aws s3 cp --only-show-errors "s3://$DEPLOY_BUCKET/$p/bundle.tar.gz" "$tmp/bundle.tar.gz"
+  stage="$tmp/b"
+  mkdir "$stage"
+  tar -xzf "$tmp/bundle.tar.gz" -C "$stage" --no-same-owner --no-same-permissions
+fi
+if [[ ! -d "$stage/quadlet" ]]; then
+  if $local_only; then die "$src/quadlet 不存在（$p 還沒部署過）"; else die "部署包裡沒有 quadlet/"; fi
+fi
+[[ -z "$(find "$stage" -type l -print -quit)" ]] || die "部署包裡不能有符號連結"
+# 所有單元與 drop-in 資料夾都以專案名稱開頭：共用主機上不會撞名，也放不進影響別人的頂層 drop-in
+for f in "$stage"/quadlet/*; do
+  b="$(basename "$f")"
+  [[ "$b" == "$p".* || "$b" == "$p"-* ]] || die "quadlet/$b：檔名要以 $p 開頭"
+done
+new_site=""
+[[ -f "$stage/site.caddy" ]] && new_site="$stage/site.caddy"
+check_site "$new_site" || die "site.caddy 驗證失敗，這次部署不生效（服務與站台都沒有動）"
+
+if ! $local_only; then
+  install -d -m 755 "$src"
+  rm -rf "$src/quadlet.new"
+  cp -r "$stage/quadlet" "$src/quadlet.new"
+  rm -rf "$src/quadlet"
+  mv "$src/quadlet.new" "$src/quadlet"
+  for f in site.caddy backup.sh; do
+    if [[ -f "$stage/$f" ]]; then
+      mode=644
+      [[ "$f" == backup.sh ]] && mode=755
+      install -m "$mode" "$stage/$f" "$src/$f"
+    else
+      rm -f "$src/$f"
+    fi
+  done
+fi
+
+# ---------- 2. 秘密：Parameter Store /<專案>/<名稱> → podman secret <專案>_<名稱>（值走 stdin，不進命令列）----------
+aws ssm get-parameters-by-path --path "/$p/" --with-decryption --output json | python3 -c '
+import json, re, subprocess, sys
+project = sys.argv[1]
+count = 0
+for param in json.load(sys.stdin)["Parameters"]:
+    full = param["Name"]
+    name = full.rsplit("/", 1)[1]
+    if not re.fullmatch(r"[A-Za-z0-9_]+", name):
+        sys.exit(f"tenant-deploy: 參數名稱只能有英數字與底線：{full}")
+    subprocess.run(
+        ["podman", "secret", "create", "--replace", f"{project}_{name}", "-"],
+        input=param["Value"].encode(), check=True, stdout=subprocess.DEVNULL,
+    )
+    count += 1
+print(f"tenant-deploy: 同步了 {count} 個秘密")
+' "$p"
+
+# ---------- 3. 映像先拉好，重啟時不會卡在下載（已經有的不重拉：部署用的標籤不可覆寫）----------
+mapfile -t images < <(grep -rhoP '^\s*Image=\K\S+' "$src/quadlet" | grep -vE '\.(image|build)$' | sort -u)
+for img in "${images[@]}"; do
+  podman image exists "$img" && continue
+  log "拉 $img"
+  podman pull -q "$img" >/dev/null
+done
+
+# ---------- 4. 安裝單元：先停掉這次不再有的服務，再換檔案、重啟 ----------
+services_in() {
+  local f
+  for f in "$1"/*.container; do
+    [[ -e "$f" ]] && echo "$(basename "$f" .container).service"
+  done
+  return 0
+}
+mapfile -t new < <(services_in "$src/quadlet")
+if [[ -d "$dst" ]]; then
+  mapfile -t old < <(services_in "$dst")
+  for u in "${old[@]}"; do
+    printf '%s\n' "${new[@]}" | grep -qxF "$u" || systemctl stop "$u" || true
+  done
+fi
+rm -rf "$dst.new"
+cp -r "$src/quadlet" "$dst.new"
+rm -rf "$dst"
+mv "$dst.new" "$dst"
+systemctl daemon-reload
+if ((${#new[@]})); then
+  log "重啟 ${new[*]}"
+  systemctl restart "${new[@]}"
+fi
+
+# ---------- 5. 確認都起來了（起來之後馬上掛掉的也要抓到）----------
+sleep 5
+failed=()
+for u in "${new[@]}"; do
+  systemctl is-active --quiet "$u" || failed+=("$u")
+done
+if ((${#failed[@]})); then
+  for u in "${failed[@]}"; do journalctl -u "$u" -n 30 --no-pager >&2 || true; done
+  die "沒有起來：${failed[*]}（站台檔沒有更新）"
+fi
+
+# ---------- 6. 站台（第 1 步驗證過了）----------
+if [[ -f "$src/site.caddy" ]]; then
+  install -m 644 "$src/site.caddy" "$site"
+else
+  rm -f "$site"
+fi
+podman exec edge-caddy caddy reload --config /etc/caddy/Caddyfile
+
+log "$p 部署完成"

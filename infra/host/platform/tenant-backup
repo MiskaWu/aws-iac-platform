@@ -1,0 +1,23 @@
+#!/bin/bash
+# 每天由 tenant-backup.timer 執行：每個有 /srv/<專案>/backup.sh 的專案，把它的 stdout 上傳成
+# s3://<備份 bucket>/<專案>/<UTC 時間>.dump。先寫到資料碟上的暫存檔，完整跑完才上傳，不會留下半份備份。
+set -uo pipefail
+export HOME=/root PATH="$PATH:/snap/bin"
+# shellcheck source=/dev/null
+. /usr/local/lib/platform/platform.env
+
+rc=0
+for script in /srv/*/backup.sh; do
+  [[ -x "$script" ]] || continue
+  p="$(basename "$(dirname "$script")")"
+  key="$p/$(date -u +%Y%m%dT%H%M%SZ).dump"
+  tmp="$(mktemp -p /srv .backup.XXXXXX)"
+  if "$script" >"$tmp" && aws s3 cp --only-show-errors "$tmp" "s3://$BACKUP_BUCKET/$key"; then
+    echo "tenant-backup: $p → s3://$BACKUP_BUCKET/$key（$(stat -c %s "$tmp") bytes）"
+  else
+    echo "tenant-backup: $p 備份失敗" >&2
+    rc=1
+  fi
+  rm -f "$tmp"
+done
+exit "$rc"

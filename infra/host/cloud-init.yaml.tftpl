@@ -1,0 +1,25 @@
+#cloud-config
+# 共用主機第一次開機（infra/host.tf）。只做兩件事：掛 /srv 資料碟、裝套件。
+# 其餘的設定由 SSM 的 PlatformSync 套用（infra/ssm.tf），它會等這份跑完才開始。
+
+write_files:
+  - path: /etc/platform/data-volume-id
+    content: "${data_volume_id}\n"
+  - path: /usr/local/sbin/mount-data
+    permissions: "0755"
+    content: ${jsonencode(mount_script)}
+
+package_update: true
+# 這份清單和 tests/host-sim/Containerfile 一致；模擬器不裝推薦套件，漏了什麼會在那裡先壞掉。
+# aardvark-dns 只是 podman 的推薦套件，但沒有它容器之間不能用名稱互找（edge-caddy 找不到各專案的服務）。
+packages:
+  - podman
+  - aardvark-dns
+  - amazon-ecr-credential-helper
+
+snap:
+  commands:
+    - snap install aws-cli --classic
+
+runcmd:
+  - /usr/local/sbin/mount-data
