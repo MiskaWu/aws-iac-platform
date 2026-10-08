@@ -5,9 +5,25 @@
 ```
 bootstrap/   一次性：GitHub OIDC 提供者、兩個部署角色、state bucket。手動套用，CI 不碰。
 infra/       之後所有資源都寫在這裡，由 GitHub Actions 部署。
-Makefile     在 CloudShell 套用 bootstrap 用：make plan / apply / migrate。
+Makefile     安裝 OpenTofu（make tofu）、更新鎖檔（make lock）、在 CloudShell 套用 bootstrap（make plan / apply / migrate）。
+.opentofu-version                OpenTofu 版本，本機、CloudShell、CI 都照這個檔安裝。
 .github/workflows/opentofu.yml   PR 跑 plan，main 跑 apply。
 ```
+
+## 工具版本
+
+OpenTofu 本身和 provider 都鎖在 repo 裡，不依賴各台機器上剛好裝了什麼：
+
+| 鎖什麼 | 寫在哪 | 誰讀 |
+| --- | --- | --- |
+| OpenTofu 版本 | `.opentofu-version` | `make tofu`、CI 的 `setup-opentofu`（`tofu_version_file`） |
+| provider 版本與雜湊 | `bootstrap/.terraform.lock.hcl`、`infra/.terraform.lock.hcl` | `tofu init` |
+
+`make tofu` 把指定版本裝到 `~/.cache/opentofu/<版本>/tofu`，不需要 root，也不碰 PATH 上原本的 `tofu`；已經裝過就直接略過。之後的 `make` 指令都用這一支。
+
+- **升級 OpenTofu**：改 `.opentofu-version`，開 PR。CI 會照新版本跑 plan，本機下次 `make` 會自動裝新版，舊版留在原目錄不受影響。
+- **更新 provider 鎖檔**：`make lock`。改了 `versions.tf` 的版本限制，或要多支援一個平台（`Makefile` 的 `LOCK_PLATFORMS`）時執行，然後 commit 兩個鎖檔。AWS provider 每個平台解開約 700 MB，暫存目錄空間不夠時（例如 WSL 的 `/tmp` 是記憶體 tmpfs）改用磁碟：`TMPDIR=$(mktemp -d -p ~/.cache) make lock`。
+- 想在 shell 直接打 `tofu`，可以裝 [tenv](https://github.com/tofuutils/tenv)，它會自動讀 `.opentofu-version`。
 
 ## bootstrap 會建立什麼
 
@@ -84,7 +100,7 @@ plan 角色把最後一條換成 `ref` 必須是 `refs/pull/*/merge`，用來排
 
 4. 到 GitHub 把 deploy key 刪掉，並在 CloudShell 執行 `rm -f ~/.ssh/aws-iac ~/.ssh/aws-iac.pub`。
 
-CloudShell 的家目錄只有 1 GB，Makefile 已把 provider 放到 `/tmp`。工作階段重開後 `/tmp` 和 tofu 都會被清掉，但 `make` 會自動重裝、重新 init，不必手動處理。
+CloudShell 的家目錄只有 1 GB，Makefile 已把 provider 放到 `/tmp`。OpenTofu 本身約 110 MB，裝在家目錄的 `~/.cache/opentofu`，工作階段重開後還在；`/tmp` 會被清掉，但 `make` 會自動重新 init，不必手動處理。
 
 ### 3. 回到本機收尾
 

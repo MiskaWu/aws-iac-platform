@@ -4,11 +4,13 @@ on:
   pull_request:
     paths:
       - "infra/**"
+      - ".opentofu-version"
       - ".github/workflows/opentofu.yml"
   push:
     branches: [main]
     paths:
       - "infra/**"
+      - ".opentofu-version"
       - ".github/workflows/opentofu.yml"
 
 permissions:
@@ -21,7 +23,6 @@ concurrency:
 
 env:
   AWS_REGION: ap-northeast-1
-  TOFU_VERSION: "~1.10"
 
 defaults:
   run:
@@ -41,8 +42,11 @@ jobs:
 
       - uses: opentofu/setup-opentofu@v2
         with:
-          tofu_version: ${{ env.TOFU_VERSION }}
+          # 和 Makefile 讀同一個檔，本機、CloudShell、CI 用同一版
+          tofu_version_file: .opentofu-version
 
+      # 讀不到版本檔時 action 只發警告、改裝 latest，在這裡擋下
+      - run: tofu version | grep -xF "OpenTofu v$(cat ../.opentofu-version)" >/dev/null
       - run: tofu fmt -check -recursive
       - run: tofu init -input=false
       - run: tofu validate
@@ -63,8 +67,11 @@ jobs:
 
       - uses: opentofu/setup-opentofu@v2
         with:
-          tofu_version: ${{ env.TOFU_VERSION }}
+          # 和 Makefile 讀同一個檔，本機、CloudShell、CI 用同一版
+          tofu_version_file: .opentofu-version
 
+      # 讀不到版本檔時 action 只發警告、改裝 latest，在這裡擋下
+      - run: tofu version | grep -xF "OpenTofu v$(cat ../.opentofu-version)" >/dev/null
       - run: tofu init -input=false
       - run: tofu plan -input=false -lock-timeout=5m -out=tfplan
       - run: tofu apply -input=false -lock-timeout=5m tfplan
