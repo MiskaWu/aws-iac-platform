@@ -85,7 +85,7 @@ plan 角色把最後一條換成 `ref` 必須是 `refs/pull/*/merge`，用來排
 
    第一次連線會問 GitHub 的主機指紋，對照 GitHub 文件公布的 ED25519 指紋後回答 `yes`。
 
-2. 啟用台北區。只需要做一次，通常幾分鐘內完成：
+2. 啟用台北區。已經啟用的話 `make enable-region` 會直接略過，第一次啟用通常幾分鐘內完成：
 
    ```sh
    make enable-region

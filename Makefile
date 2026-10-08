@@ -35,6 +35,7 @@ LOCK_PLATFORMS := linux_amd64 darwin_arm64
 
 # bootstrap 的目標區域，取自 terraform.tfvars。台北（ap-east-2）是需要手動啟用的區域。
 REGION := $(shell sed -n 's/^[[:space:]]*region[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' $(BOOTSTRAP)/terraform.tfvars 2>/dev/null)
+REGION_STATUS = aws account get-region-opt-status --region us-east-1 --region-name $(REGION) --query RegionOptStatus --output text
 
 # CloudShell 家目錄只有 1 GB，provider 放 /tmp
 export TF_DATA_DIR ?= /tmp/tofu-bootstrap
@@ -47,7 +48,7 @@ help:
 	@echo "make tofu-pin 改了 .opentofu-version 之後執行：驗證官方簽章並更新 .opentofu-checksums"
 	@echo "make lock     重新產生 bootstrap 與 infra 的 provider 鎖檔"
 	@echo "make region-check   確認 terraform.tfvars 的區域已在帳號啟用（make plan 會先跑）"
-	@echo "make enable-region  啟用該區域（只需一次，要等幾分鐘）"
+	@echo "make enable-region  啟用該區域（已啟用則略過；第一次要等幾分鐘）"
 	@echo "make plan     init 並產生計畫檔，請檢查輸出"
 	@echo "make apply    套用上一步的計畫檔"
 	@echo "make migrate  第一次 apply 後，把 bootstrap state 搬進 S3"
@@ -94,17 +95,24 @@ lock: tofu
 
 region-check:
 	@if [ -z "$(REGION)" ]; then echo "terraform.tfvars 沒寫 region，略過區域檢查"; exit 0; fi; \
-	status="$$(aws account get-region-opt-status --region us-east-1 --region-name $(REGION) --query RegionOptStatus --output text)"; \
+	status="$$($(REGION_STATUS))"; \
 	case "$$status" in \
 	  ENABLED|ENABLED_BY_DEFAULT) echo "區域 $(REGION)：$$status" ;; \
 	  ENABLING) echo "區域 $(REGION) 啟用中，過幾分鐘再跑一次。"; exit 1 ;; \
 	  *) echo "區域 $(REGION) 目前是 $$status。先執行 make enable-region，等狀態變成 ENABLED 再繼續。"; exit 1 ;; \
 	esac
 
+# 先看狀態再決定要不要送出：已啟用就略過，所以重跑也安全
 enable-region:
 	@test -n "$(REGION)" || { echo "terraform.tfvars 沒寫 region"; exit 1; }
-	aws account enable-region --region us-east-1 --region-name $(REGION)
-	@echo "已送出啟用要求，通常幾分鐘內完成。用 make region-check 確認狀態。"
+	@status="$$($(REGION_STATUS))"; \
+	case "$$status" in \
+	  ENABLED|ENABLED_BY_DEFAULT) echo "區域 $(REGION) 已啟用（$$status），不需要再做。" ;; \
+	  ENABLING) echo "區域 $(REGION) 啟用中，過幾分鐘用 make region-check 確認。" ;; \
+	  DISABLED) aws account enable-region --region us-east-1 --region-name $(REGION); \
+	    echo "已送出啟用要求，通常幾分鐘內完成。用 make region-check 確認狀態。" ;; \
+	  *) echo "區域 $(REGION) 目前是 $$status，等它結束再跑一次。"; exit 1 ;; \
+	esac
 
 init: tofu region-check
 	@test -f $(BOOTSTRAP)/terraform.tfvars || { echo "缺少 $(BOOTSTRAP)/terraform.tfvars"; exit 1; }
