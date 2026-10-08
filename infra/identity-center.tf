@@ -8,14 +8,13 @@
 #
 # Identity Center 的資料存在 ap-east-2，所以 provider 必須在同一區（infra 的預設就是）。
 
-data "aws_caller_identity" "current" {}
+# 帳號 ID（local.account_id）與 aws_caller_identity 在 main.tf，所有檔案共用
 
 data "aws_ssoadmin_instances" "this" {}
 
 locals {
   sso_instance_arn  = one(data.aws_ssoadmin_instances.this.arns)
   identity_store_id = one(data.aws_ssoadmin_instances.this.identity_store_ids)
-  account_id        = data.aws_caller_identity.current.account_id
 
   # 權限組合：名稱 => 設定。平常用 ReadOnly，要改東西才切 Administrator。
   # description 只接受 Latin-1 字元（API 驗證，plan 階段抓不到），所以用英文。
