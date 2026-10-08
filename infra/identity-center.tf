@@ -18,14 +18,15 @@ locals {
   account_id        = data.aws_caller_identity.current.account_id
 
   # 權限組合：名稱 => 設定。平常用 ReadOnly，要改東西才切 Administrator。
+  # description 只接受 Latin-1 字元（API 驗證，plan 階段抓不到），所以用英文。
   permission_sets = {
     ReadOnly = {
-      description      = "唯讀，日常查看用"
+      description      = "Read-only access for day-to-day use"
       managed_policy   = "arn:aws:iam::aws:policy/ReadOnlyAccess"
       session_duration = "PT8H"
     }
     Administrator = {
-      description      = "完整權限，需要修改時才使用"
+      description      = "Full admin access; use only when making changes"
       managed_policy   = "arn:aws:iam::aws:policy/AdministratorAccess"
       session_duration = "PT4H"
     }
