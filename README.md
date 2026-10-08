@@ -129,6 +129,68 @@ CloudShell 的家目錄只有 1 GB，Makefile 已把 provider 放到 `/tmp`。Op
 
 在 CloudShell 用同樣方式取得程式碼（或 `git pull`），然後 `make plan`、`make apply`。state 已經在 S3，不需要再 migrate。
 
+## IAM Identity Center（日常登入）
+
+本機 CLI 和主控台的日常操作都用 Identity Center 登入，不再用 root。設定寫在 `infra/identity-center.tf`：
+
+| 項目 | 內容 |
+| --- | --- |
+| instance | organization instance `ssoins-0123456789abcdef`，位於 `ap-east-2`（台北），組織 `o-exampleorgid` |
+| 使用者 | `miskawu`（you@example.com），屬於 `admins` 群組 |
+| 權限組合 | `ReadOnly`（ReadOnlyAccess，工作階段 8 小時）、`Administrator`（AdministratorAccess，4 小時） |
+| 指派 | `admins` 群組在本帳號可使用上面兩個權限組合 |
+
+平常用 `ReadOnly`，要修改時才切 `Administrator`。正式的變更還是走 PR 和 CI。
+
+### 一次性：在主控台啟用（root）
+
+Identity Center 的 organization instance 依官方文件只能在主控台啟用（API 的 CreateInstance 只能建 account instance，而 account instance 不能用來登入 AWS 帳號）。這一步會順便建立 AWS Organizations，本帳號成為 management account；組織本身不收費。
+
+1. 用 root 登入，右上角區域切到**亞太地區（台北）**，打開 IAM Identity Center，按「啟用」。
+2. 如果有出現 Instance 設定，選**單一區域**。多區域會自動建立 KMS 金鑰，要另外收費。
+3. 「Enable multi-account permissions」保持**開啟**。關掉的話不能用它登入 AWS 帳號。
+4. 出現「Enable IAM Identity Center with AWS Organizations」頁面時按「啟用」。
+5. 到 Settings → Authentication → Standard authentication → Configure，勾選 **Send email OTP** 後儲存。少了這一步，用 OpenTofu 建立的使用者收不到設定密碼的信。
+6. （可選）在 Settings 把 AWS access portal 的網址改成好記的名稱。目前的網址是 `https://d-0123456789.awsapps.com/start`，改了之後下面 `~/.aws/config` 的 `sso_start_url` 也要跟著改。
+
+MFA 不用另外設定：新的 instance 預設第一次登入就要註冊 MFA，建議註冊 passkey 或實體安全金鑰。
+
+Identity Center 的區域之後**不能直接更改**，要換只能刪掉重建。台北又是需要手動啟用的區域，所以之後如果在組織裡加新帳號，每個新帳號都要先啟用台北區，才能從 access portal 登入。
+
+### 啟用之後
+
+1. 合併 `infra/identity-center.tf` 的 PR，CI 會建立使用者、群組、權限組合和指派。
+2. 打開 access portal 網址，用 `miskawu` 登入。系統會寄驗證信到 you@example.com，設定密碼並註冊 MFA。
+3. 本機設定 `~/.aws/config`：
+
+   ```ini
+   [sso-session miskawu]
+   sso_start_url = https://d-0123456789.awsapps.com/start
+   sso_region = ap-east-2
+   sso_registration_scopes = sso:account:access
+
+   [profile readonly]
+   sso_session = miskawu
+   sso_account_id = 123456789012
+   sso_role_name = ReadOnly
+   region = ap-east-2
+
+   [profile admin]
+   sso_session = miskawu
+   sso_account_id = 123456789012
+   sso_role_name = Administrator
+   region = ap-east-2
+   ```
+
+4. 登入並確認：
+
+   ```sh
+   aws sso login --sso-session miskawu
+   aws sts get-caller-identity --profile readonly
+   ```
+
+之後 root 只留給必須由 root 做的少數操作。
+
 ## 日常流程
 
 1. 在分支修改 `infra/`，開 PR。workflow 用 plan 角色跑 `fmt`、`validate`、`plan`。
@@ -145,4 +207,4 @@ CloudShell 的家目錄只有 1 GB，Makefile 已把 provider 放到 `/tmp`。Op
 - **state bucket 設了 `prevent_destroy`**，誤下 `tofu destroy` 會被擋下。
 - **費用**：OIDC 提供者和 IAM 角色不收費；state 檔只有幾 KB，S3 月費趨近 0。
 - **出現 `Invalid AWS Region: ap-east-2`** 表示 OpenTofu 或 provider 版本太舊、不認得台北區。照「工具版本」升級 `.opentofu-version` 或重跑 `make lock`。台北區在 2025 年 6 月開放，之後發布的版本都應該認得。
-- **root 進不了這兩個角色**（root 不能切換角色）。本機要直接操作時，另外啟用 IAM Identity Center 建自己的管理員身分。
+- **root 進不了這兩個角色**（root 不能切換角色）。本機要直接操作 AWS 時，用「IAM Identity Center」的身分登入。
