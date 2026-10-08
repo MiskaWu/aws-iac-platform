@@ -51,14 +51,7 @@ plan 角色把最後一條換成 `ref` 必須是 `refs/pull/*/merge`，用來排
 
 `bootstrap/terraform.tfvars` 已經填好 `MiskaWu/aws-infra` 的名稱和數字 ID。這個 repo 建立於 2026-10-07，GitHub 發出的 OIDC `sub` 會是含 ID 的新格式。
 
-剩下一步：產生兩邊的 provider 鎖檔並 commit，讓 CloudShell、PR 的 plan、main 的 apply 都用同一版 provider。
-
-```sh
-(cd bootstrap && tofu providers lock -platform=linux_amd64 -platform=darwin_arm64)
-(cd infra && tofu providers lock -platform=linux_amd64 -platform=darwin_arm64)
-```
-
-沒有鎖檔也能跑，只是每次 `init` 都會抓最新的 6.x provider。
+兩邊的 provider 鎖檔也已經 commit（見「工具版本」），CloudShell、PR 的 plan、main 的 apply 會用同一版 provider。本機不需要再做什麼，直接到 CloudShell。
 
 ### 2. CloudShell 套用
 
