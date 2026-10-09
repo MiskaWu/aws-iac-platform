@@ -64,9 +64,13 @@ put "$src/tenant-deploy" /usr/local/sbin/tenant-deploy 755
 put "$src/tenant-backup" /usr/local/sbin/tenant-backup 755
 put "$src/systemd/tenant-backup.service" /etc/systemd/system/tenant-backup.service 644
 put "$src/systemd/tenant-backup.timer" /etc/systemd/system/tenant-backup.timer 644
+put "$src/tenant-hourly" /usr/local/sbin/tenant-hourly 755
+put "$src/systemd/tenant-hourly.service" /etc/systemd/system/tenant-hourly.service 644
+put "$src/systemd/tenant-hourly.timer" /etc/systemd/system/tenant-hourly.timer 644
 
 systemctl daemon-reload
 systemctl enable --now tenant-backup.timer
+systemctl enable --now tenant-hourly.timer
 
 # edge：單元或 podman 的設定改了就重啟；只有 Caddyfile 改了就 reload（不斷線）
 if was_changed /etc/containers/systemd/ /etc/containers/storage.conf /etc/containers/platform-auth.json; then

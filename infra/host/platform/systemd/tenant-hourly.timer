@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly tenant jobs at minute 2
+
+[Timer]
+# 整點過 2 分：上一個小時的存取紀錄都寫完了
+OnCalendar=*-*-* *:02:00
+# 錯過的不補跑（報告只看最近的）
+Persistent=false
+
+[Install]
+WantedBy=timers.target

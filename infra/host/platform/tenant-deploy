@@ -4,7 +4,8 @@
 #   tenant-deploy <專案>           從 s3://<部署 bucket>/<專案>/bundle.tar.gz 拿部署包
 #   tenant-deploy --local <專案>   用 /srv/<專案>/ 現有的內容（換主機之後由 install.sh 呼叫）
 #
-# 部署包：quadlet/（單元檔與這個環境的 drop-in）、site.caddy（填好網域的站台檔，選配）、backup.sh（選配）。
+# 部署包：quadlet/（單元檔與這個環境的 drop-in）、site.caddy（填好網域的站台檔，選配）、backup.sh（選配）、
+# hourly.sh（選配，每小時執行一次，tenant-hourly）。
 set -euo pipefail
 export HOME=/root PATH="$PATH:/snap/bin" REGISTRY_AUTH_FILE=/etc/containers/platform-auth.json
 # shellcheck source=/dev/null
@@ -76,10 +77,10 @@ if ! $local_only; then
   cp -r "$stage/quadlet" "$src/quadlet.new"
   rm -rf "$src/quadlet"
   mv "$src/quadlet.new" "$src/quadlet"
-  for f in site.caddy backup.sh; do
+  for f in site.caddy backup.sh hourly.sh; do
     if [[ -f "$stage/$f" ]]; then
       mode=644
-      [[ "$f" == backup.sh ]] && mode=755
+      [[ "$f" == *.sh ]] && mode=755
       install -m "$mode" "$stage/$f" "$src/$f"
     else
       rm -f "$src/$f"

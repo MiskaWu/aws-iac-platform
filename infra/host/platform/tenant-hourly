@@ -1,0 +1,23 @@
+#!/bin/bash
+# 每小時由 tenant-hourly.timer 執行：每個有 /srv/<專案>/hourly.sh 的專案跑一次（例如每小時的報告）。
+# 以 root 在 /srv/<專案>/ 裡執行，AWS_REGION 已經設好（讀 Parameter Store 的 /<專案>/… 用）。
+# 一個專案失敗不影響別的專案；每個最多跑 5 分鐘。輸出進 journald：journalctl -u tenant-hourly
+set -uo pipefail
+export HOME=/root PATH="$PATH:/snap/bin"
+# shellcheck source=/dev/null
+. /usr/local/lib/platform/platform.env
+export AWS_REGION="$REGION" AWS_DEFAULT_REGION="$REGION"
+
+rc=0
+for script in /srv/*/hourly.sh; do
+  [[ -x "$script" ]] || continue
+  dir="$(dirname "$script")"
+  p="$(basename "$dir")"
+  if (cd "$dir" && timeout 300 "$script"); then
+    echo "tenant-hourly: $p 完成"
+  else
+    echo "tenant-hourly: $p 失敗" >&2
+    rc=1
+  fi
+done
+exit "$rc"

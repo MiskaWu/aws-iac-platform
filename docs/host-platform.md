@@ -15,7 +15,7 @@
                             ├─ /srv（獨立的 EBS 資料碟，換主機也留著，每天快照）
                             │   ├─ containers/storage/           podman 的儲存：映像、volume、secret
                             │   ├─ edge/caddy/                   Caddyfile、sites/<專案>.caddy；edge/data 是憑證
-                            │   └─ <專案>/                       部署包解開後的正本：quadlet/、site.caddy、backup.sh
+                            │   └─ <專案>/                       部署包解開後的正本：quadlet/、site.caddy、backup.sh、hourly.sh
                             │
                             └─ podman 網路 edge（172.30.0.0/24，edge-caddy 固定 172.30.0.2，其他容器從 .128 起分配）
                                 ├─ edge-caddy ──→ <專案>-<服務>:<埠>
@@ -52,7 +52,7 @@ ECR：每個專案一個倉庫　Parameter Store：/<專案>/<名稱>　S3：部
 
 | 項目 | 約定 |
 | --- | --- |
-| 部署包 | `bundle.tar.gz`：`quadlet/`（單元檔與這個環境的 drop-in）、`site.caddy`（填好網域的站台檔，選配）、`backup.sh`（選配） |
+| 部署包 | `bundle.tar.gz`：`quadlet/`（單元檔與這個環境的 drop-in）、`site.caddy`（填好網域的站台檔，選配）、`backup.sh`（選配）、`hourly.sh`（選配） |
 | 命名 | `quadlet/` 底下每個檔案與 drop-in 資料夾都以 `<專案>-` 開頭（或 `<專案>.`）；`ContainerName=`、`NetworkName=`、`VolumeName=` 也是。`tenant-deploy` 會擋不合的部署包 |
 | 對外的服務 | `Network=edge.network` 加 `NetworkAlias=<專案>-<服務>`，站台檔用這個別名當上游 |
 | 其他服務 | 只在專案自己的網路（`Internal=true` 的 `.network`）。**任何服務都不寫 `PublishPort=`**，對外一律經過 edge-caddy |
@@ -63,6 +63,7 @@ ECR：每個專案一個倉庫　Parameter Store：/<專案>/<名稱>　S3：部
 | 開機自動起 | `[Install] WantedBy=default.target` |
 | 資料碟依賴 | 不用自己寫：平台的頂層 drop-in 會替每個 `.container`、`.volume` 加 `RequiresMountsFor=/srv` |
 | 備份 | 每天 04:17（台北）以 root 執行 `/srv/<專案>/backup.sh`，stdout 寫到暫存檔、整份跑完才上傳成 `s3://platform-backups-…/<專案>/<UTC 時間>.dump`（留 35 天）。主機對備份 bucket 只能寫 |
+| 每小時的工作 | 每個整點過 2 分以 root 在 `/srv/<專案>/` 裡執行 `hourly.sh`（例如發報告），`AWS_REGION` 已經設好，讀得到 Parameter Store 的 `/<專案>/…`（主機角色本來就能讀，部署時同步秘密用的同一個權限）；最多跑 5 分鐘、錯過的不補跑。日誌：`journalctl -u tenant-hourly` |
 | 日誌 | journald：`journalctl -u <專案>-<服務>` |
 
 `tenant-deploy` 的順序：在暫存區驗證整包（檔名、沒有符號連結、站台檔放進 Caddy 驗證整份設定）→ 寫進 `/srv/<專案>/` →

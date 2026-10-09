@@ -8,6 +8,7 @@
 #   tests/host-sim/run.sh sync                          平台檔案改了之後重新套用
 #   tests/host-sim/run.sh replace                       換一台新主機（/srv 留著），驗證專案自己回來
 #   tests/host-sim/run.sh backup                        執行一次每日備份，列出假 S3 裡的備份
+#   tests/host-sim/run.sh hourly                        執行一次每小時的工作（各專案的 hourly.sh），印出它的輸出
 #   tests/host-sim/run.sh exec <指令…>                  在模擬主機裡執行
 #   tests/host-sim/run.sh down [--purge]                停掉；--purge 連 /srv 與假的 S3、Parameter Store 一起刪
 #
@@ -105,6 +106,10 @@ case "$cmd" in
     "${PODMAN[@]}" rm -f -t 30 "$NAME" >/dev/null
     start
     platform_sync
+    ;;
+  hourly)
+    inside systemctl start tenant-hourly.service
+    inside journalctl -u tenant-hourly.service -n 40 --no-pager -o cat
     ;;
   backup)
     inside systemctl start tenant-backup.service
