@@ -90,10 +90,12 @@ fi
 
 # ---------- 2. 秘密：Parameter Store /<專案>/<名稱> → podman secret <專案>_<名稱>（值走 stdin，不進命令列）----------
 aws ssm get-parameters-by-path --path "/$p/" --with-decryption --output json | python3 -c '
-import json, re, subprocess, sys
-project = sys.argv[1]
+import hashlib, json, re, subprocess, sys
+project, digest_file = sys.argv[1], sys.argv[2]
 count = 0
-for param in json.load(sys.stdin)["Parameters"]:
+digest = hashlib.sha256()
+params = sorted(json.load(sys.stdin)["Parameters"], key=lambda x: x["Name"])
+for param in params:
     full = param["Name"]
     name = full.rsplit("/", 1)[1]
     if not re.fullmatch(r"[A-Za-z0-9_]+", name):
@@ -102,9 +104,15 @@ for param in json.load(sys.stdin)["Parameters"]:
         ["podman", "secret", "create", "--replace", f"{project}_{name}", "-"],
         input=param["Value"].encode(), check=True, stdout=subprocess.DEVNULL,
     )
+    digest.update(full.encode() + b"\0" + hashlib.sha256(param["Value"].encode()).digest())
     count += 1
+with open(digest_file, "w") as f:
+    f.write(digest.hexdigest() + "\n")
 print(f"tenant-deploy: 同步了 {count} 個秘密")
-' "$p"
+' "$p" "$src/.secrets.sha256.new"
+secrets_changed=true
+cmp -s "$src/.secrets.sha256.new" "$src/.secrets.sha256" 2>/dev/null && secrets_changed=false
+mv "$src/.secrets.sha256.new" "$src/.secrets.sha256"
 
 # ---------- 3. 映像先拉好，重啟時不會卡在下載（已經有的不重拉：部署用的標籤不可覆寫）----------
 mapfile -t images < <(grep -rhoP '^\s*Image=\K\S+' "$src/quadlet" | grep -vE '\.(image|build)$' | sort -u)
@@ -114,7 +122,7 @@ for img in "${images[@]}"; do
   podman pull -q "$img" >/dev/null
 done
 
-# ---------- 4. 安裝單元：先停掉這次不再有的服務，再換檔案、重啟 ----------
+# ---------- 4. 安裝單元：先停掉這次不再有的服務，再換檔案、需要的話重啟 ----------
 services_in() {
   local f
   for f in "$1"/*.container; do
@@ -123,6 +131,15 @@ services_in() {
   return 0
 }
 mapfile -t new < <(services_in "$src/quadlet")
+# 只有需要時才重啟：單元檔（含 drop-in 裡的映像與版本號）變了、秘密變了、或有服務沒在跑。
+# 只換了站台檔、backup.sh、hourly.sh 時線上的人不會斷線
+restart=true
+if [[ -d "$dst" ]] && ! $secrets_changed && diff -rq "$src/quadlet" "$dst" >/dev/null 2>&1; then
+  restart=false
+  for u in "${new[@]}"; do
+    systemctl is-active --quiet "$u" || restart=true
+  done
+fi
 if [[ -d "$dst" ]]; then
   mapfile -t old < <(services_in "$dst")
   for u in "${old[@]}"; do
@@ -134,13 +151,15 @@ cp -r "$src/quadlet" "$dst.new"
 rm -rf "$dst"
 mv "$dst.new" "$dst"
 systemctl daemon-reload
-if ((${#new[@]})); then
+if $restart && ((${#new[@]})); then
   log "重啟 ${new[*]}"
   systemctl restart "${new[@]}"
+elif ((${#new[@]})); then
+  log "單元檔與秘密都沒變、服務都在跑：不重啟"
 fi
 
 # ---------- 5. 確認都起來了（起來之後馬上掛掉的也要抓到）----------
-sleep 5
+$restart && sleep 5
 failed=()
 for u in "${new[@]}"; do
   systemctl is-active --quiet "$u" || failed+=("$u")
