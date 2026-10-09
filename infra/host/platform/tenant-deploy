@@ -73,9 +73,10 @@ check_site "$new_site" || die "site.caddy 驗證失敗，這次部署不生效�
 
 if ! $local_only; then
   install -d -m 755 "$src"
-  rm -rf "$src/quadlet.new"
+  rm -rf "$src/quadlet.new" "$src/quadlet.prev"
   cp -r "$stage/quadlet" "$src/quadlet.new"
-  rm -rf "$src/quadlet"
+  # 上一包的單元檔留一份：範本單元的新版起不來時換回來（第 4 步）
+  [[ -d "$src/quadlet" ]] && mv "$src/quadlet" "$src/quadlet.prev"
   mv "$src/quadlet.new" "$src/quadlet"
   for f in site.caddy backup.sh hourly.sh; do
     if [[ -f "$stage/$f" ]]; then
@@ -122,46 +123,136 @@ for img in "${images[@]}"; do
   podman pull -q "$img" >/dev/null
 done
 
-# ---------- 4. 安裝單元：先停掉這次不再有的服務，再換檔案、需要的話重啟 ----------
+# ---------- 4. 安裝單元、只重啟需要的服務 ----------
+# 一般單元（<名稱>.container）：只有它自己的檔案或 drop-in 變了、秘密變了、或沒在跑才重啟（只換站台檔、backup.sh、
+# hourly.sh 時線上的人不會斷線；只換了伺服器的映像時資料庫不會跟著重啟）。.network、.volume 這類變了就全部重啟。
+#
+# 範本單元（<名稱>@.container）：換版不斷線（docs/host-platform.md「範本單元」）。平台平常只跑一份（@a 或 @b，
+# 記在 /srv/<專案>/.slot-<名稱>），要換的時候在另一個位子起新版、等它健康（Notify=healthy）才關舊的；
+# 新版起不來就把它停掉，舊版照常服務。開機時只有現在的位子會起來（只有它有實例檔，[Install] 只套在它身上）。
+# 一般單元（範本 <名稱>@.container 與平台建的實例檔 <名稱>@<位子>.container 都不算）
 services_in() {
   local f
   for f in "$1"/*.container; do
-    [[ -e "$f" ]] && echo "$(basename "$f" .container).service"
+    [[ -e "$f" ]] || continue
+    f="$(basename "$f" .container)"
+    [[ "$f" == *@* ]] || echo "$f.service"
   done
   return 0
 }
+templates_in() {
+  local f
+  for f in "$1"/*@.container; do
+    [[ -e "$f" ]] && basename "$f" .container | sed 's/@$//'
+  done
+  return 0
+}
+# 一個單元檔（含它的 drop-in 資料夾）和現在裝著的不一樣
+unit_changed() { # unit_changed <檔名>
+  [[ -d "$dst" ]] || return 0
+  diff -q "$src/quadlet/$1" "$dst/$1" >/dev/null 2>&1 || return 0
+  [[ -d "$src/quadlet/$1.d" || -d "$dst/$1.d" ]] || return 1
+  ! diff -rq "$src/quadlet/$1.d" "$dst/$1.d" >/dev/null 2>&1
+}
+slot_of() { cat "$src/.slot-$1" 2>/dev/null || true; }
+
 mapfile -t new < <(services_in "$src/quadlet")
-# 只有需要時才重啟：單元檔（含 drop-in 裡的映像與版本號）變了、秘密變了、或有服務沒在跑。
-# 只換了站台檔、backup.sh、hourly.sh 時線上的人不會斷線
-restart=true
-if [[ -d "$dst" ]] && ! $secrets_changed && diff -rq "$src/quadlet" "$dst" >/dev/null 2>&1; then
-  restart=false
-  for u in "${new[@]}"; do
-    systemctl is-active --quiet "$u" || restart=true
-  done
-fi
+mapfile -t tpls < <(templates_in "$src/quadlet")
+old=()
+[[ -d "$dst" ]] && mapfile -t old < <(services_in "$dst")
+# .network、.volume 這類：本來就有的變了或拿掉了才算（新加的只有用到它的單元會用，那些單元本來就會起或重啟）
+others_changed=false
 if [[ -d "$dst" ]]; then
-  mapfile -t old < <(services_in "$dst")
-  for u in "${old[@]}"; do
-    printf '%s\n' "${new[@]}" | grep -qxF "$u" || systemctl stop "$u" || true
+  for f in "$dst"/*; do
+    b="$(basename "$f")"
+    [[ "$b" == *.container || "$b" == *.container.d ]] && continue
+    if [[ -d "$f" ]]; then
+      diff -rq "$f" "$src/quadlet/$b" >/dev/null 2>&1 || others_changed=true
+    else
+      diff -q "$f" "$src/quadlet/$b" >/dev/null 2>&1 || others_changed=true
+    fi
   done
+else
+  others_changed=true
 fi
+
+restart=()
+for u in "${new[@]}"; do
+  if $secrets_changed || $others_changed || unit_changed "${u%.service}.container" || ! systemctl is-active --quiet "$u"; then
+    restart+=("$u")
+  fi
+done
+
 rm -rf "$dst.new"
 cp -r "$src/quadlet" "$dst.new"
+# 範本現在的位子保留實例檔（符號連結到範本）：開機照樣起來、daemon-reload 之後還是同一個單元
+for t in "${tpls[@]}"; do
+  cur="$(slot_of "$t")"
+  [[ -n "$cur" ]] && ln -s "$t@.container" "$dst.new/$t@$cur.container"
+done
+tpl_changed=()
+for t in "${tpls[@]}"; do
+  if $secrets_changed || $others_changed || unit_changed "$t@.container"; then tpl_changed+=("$t"); fi
+done
 rm -rf "$dst"
 mv "$dst.new" "$dst"
 systemctl daemon-reload
-if $restart && ((${#new[@]})); then
-  log "重啟 ${new[*]}"
-  systemctl restart "${new[@]}"
+if ((${#restart[@]})); then
+  log "重啟 ${restart[*]}"
+  systemctl restart "${restart[@]}"
 elif ((${#new[@]})); then
-  log "單元檔與秘密都沒變、服務都在跑：不重啟"
+  log "一般單元與秘密都沒變、服務都在跑：不重啟"
 fi
 
+# 範本：需要換（範本或它的 drop-in 變了、秘密變了、現在的位子沒在跑、還沒有位子）就換到另一個位子
+for t in "${tpls[@]}"; do
+  cur="$(slot_of "$t")"
+  need=false
+  printf '%s\n' "${tpl_changed[@]}" | grep -qxF "$t" && need=true
+  [[ -z "$cur" ]] && need=true
+  [[ -n "$cur" ]] && ! systemctl is-active --quiet "$t@$cur.service" && need=true
+  if ! $need; then
+    log "$t@$cur 沒變、在跑：不換"
+    continue
+  fi
+  next=a
+  [[ "$cur" == a ]] && next=b
+  ln -sfn "$t@.container" "$dst/$t@$next.container"
+  systemctl daemon-reload
+  log "$t：起 @$next${cur:+（現在是 @$cur）}，等它健康"
+  if ! systemctl start "$t@$next.service"; then
+    journalctl -u "$t@$next.service" -n 40 --no-pager >&2 || true
+    systemctl stop "$t@$next.service" || true
+    # 單元檔換回上一包：正在服務的舊版之後自己重啟、或主機重開機，才不會用到起不來的設定
+    if [[ -d "$src/quadlet.prev" ]]; then
+      rm -rf "$src/quadlet" "$dst"
+      cp -r "$src/quadlet.prev" "$src/quadlet"
+      cp -r "$src/quadlet" "$dst"
+      while read -r pt; do
+        ps="$(slot_of "$pt")"
+        [[ -n "$ps" ]] && ln -s "$pt@.container" "$dst/$pt@$ps.container"
+      done < <(templates_in "$dst")
+    else
+      rm -f "$dst/$t@$next.container"
+    fi
+    systemctl daemon-reload
+    die "$t@$next 起不來，已經停掉、單元檔換回上一包${cur:+；@$cur 照常服務}（站台檔沒有更新）"
+  fi
+  if [[ -n "$cur" ]]; then
+    log "$t：@$next 健康了，關 @$cur（它先排水再停）"
+    systemctl stop "$t@$cur.service" || true
+    rm -f "$dst/$t@$cur.container"
+  fi
+  echo "$next" >"$src/.slot-$t"
+  systemctl daemon-reload
+done
+
 # ---------- 5. 確認都起來了（起來之後馬上掛掉的也要抓到）----------
-$restart && sleep 5
+check=("${new[@]}")
+for t in "${tpls[@]}"; do check+=("$t@$(slot_of "$t").service"); done
+((${#restart[@]})) && sleep 5
 failed=()
-for u in "${new[@]}"; do
+for u in "${check[@]}"; do
   systemctl is-active --quiet "$u" || failed+=("$u")
 done
 if ((${#failed[@]})); then
@@ -176,5 +267,20 @@ else
   rm -f "$site"
 fi
 podman exec edge-caddy caddy reload --config /etc/caddy/Caddyfile
+
+# ---------- 7. 這次不再有的服務：新的起來、站台換好之後才停（換了單元名稱也不斷線）----------
+for u in "${old[@]}"; do
+  printf '%s\n' "${new[@]}" | grep -qxF "$u" && continue
+  log "停掉不再有的 $u"
+  systemctl stop "$u" || true
+done
+# 不再有的範本：還在跑的位子都停掉、忘掉它的位子
+while read -r u _; do
+  t="${u%@*}"
+  printf '%s\n' "${tpls[@]}" | grep -qxF "$t" && continue
+  log "停掉不再有的 $u"
+  systemctl stop "$u" || true
+  rm -f "$src/.slot-$t"
+done < <(systemctl list-units --plain --no-legend --state=active "$p-*@*.service")
 
 log "$p 部署完成"

@@ -61,16 +61,47 @@ ECR：每個專案一個倉庫　Parameter Store：/<專案>/<名稱>　S3：部
 | 每個環境不同的值 | 用 drop-in（例如 `<專案>-server.container.d/10-env.conf` 放 `Image=`），基本的單元檔各環境共用 |
 | 映像 | `<帳號>.dkr.ecr.<區域>.amazonaws.com/<專案>:<標籤>`，至少含 `linux/arm64`；不用 `podman login`。主機上已經有的映像不重拉（部署用的標籤不可覆寫） |
 | 開機自動起 | `[Install] WantedBy=default.target` |
+| 換版不斷線（選配） | 對外的服務寫成**範本單元** `<專案>-<服務>@.container`（`ContainerName=<專案>-<服務>-%i`、`NetworkAlias=<專案>-<服務>-%i`，要有 `HealthCmd` 與 `Notify=healthy`）。平台平常只跑一份（`@a` 或 `@b`），換版時在另一個位子起新版、等它健康才關舊的。站台檔兩個位子都列、加健康檢查；服務收到 SIGTERM 要先讓健康檢查失敗幾秒（排水）再關。見下面「範本單元」 |
 | 資料碟依賴 | 不用自己寫：平台的頂層 drop-in 會替每個 `.container`、`.volume` 加 `RequiresMountsFor=/srv` |
 | 備份 | 每天 04:17（台北）以 root 執行 `/srv/<專案>/backup.sh`，stdout 寫到暫存檔、整份跑完才上傳成 `s3://platform-backups-…/<專案>/<UTC 時間>.dump`（留 35 天）。主機對備份 bucket 只能寫 |
 | 每小時的工作 | 每個整點過 2 分以 root 在 `/srv/<專案>/` 裡執行 `hourly.sh`（例如發報告），`AWS_REGION` 已經設好，讀得到 Parameter Store 的 `/<專案>/…`（主機角色本來就能讀，部署時同步秘密用的同一個權限）；最多跑 5 分鐘、錯過的不補跑。日誌：`journalctl -u tenant-hourly` |
-| 日誌 | journald：`journalctl -u <專案>-<服務>` |
+| 日誌 | journald：`journalctl -u <專案>-<服務>`（範本單元：`journalctl -u '<專案>-<服務>@*'`） |
 
 `tenant-deploy` 的順序：在暫存區驗證整包（檔名、沒有符號連結、站台檔放進 Caddy 驗證整份設定）→ 寫進 `/srv/<專案>/` →
-同步秘密 → 拉映像 → 換單元、需要的話重啟 → 確認服務都是 active → 放上站台檔、reload Caddy。
-只有單元檔（含 drop-in 裡的映像等設定）變了、秘密變了（比對雜湊，存在 `/srv/<專案>/.secrets.sha256`，不存值）、或有服務沒在跑才重啟；
-同一版重新部署（只換站台檔、`backup.sh`、`hourly.sh`）時線上的人不會斷線。驗證不過就什麼都不動；
-服務沒起來時站台檔不會更新，但服務已經換成新的了（不會自動退回，用上一包再部署一次）。
+同步秘密 → 拉映像 → 換單元、重啟有變的一般單元 → 範本單元換位子 → 確認服務都是 active → 放上站台檔、reload Caddy →
+停掉這次不再有的服務（新的起來、站台換好之後才停，換了單元名稱也不斷線）。
+
+**只重啟需要的**：一般單元只有**它自己的**單元檔或 drop-in 變了、秘密變了（比對雜湊，存在 `/srv/<專案>/.secrets.sha256`，不存值）、
+或沒在跑才重啟——只換了伺服器的映像時，資料庫不會跟著重啟。`.network`、`.volume` 這類檔案變了、或秘密變了，就全部重啟（那一次會斷線）。
+同一版重新部署（只換站台檔、`backup.sh`、`hourly.sh`）什麼都不重啟。驗證不過就什麼都不動；
+一般單元沒起來時站台檔不會更新，但服務已經換成新的了（不會自動退回，用上一包再部署一次）。
+
+### 範本單元：換版不斷線
+
+範本單元 `<專案>-<服務>@.container` 平常只跑一個實例（位子 `a` 或 `b`，記在 `/srv/<專案>/.slot-<專案>-<服務>`）。
+範本或它的 drop-in（`<專案>-<服務>@.container.d/`）變了、秘密變了、或現在的位子沒在跑時，`tenant-deploy`：
+
+1. 在另一個位子建實例檔（`/etc/containers/systemd/<專案>/<專案>-<服務>@<位子>.container`，符號連結到範本）、`systemctl start`。
+   `Notify=healthy` 讓它健康了才回來（`TimeoutStartSec` 內）。
+2. 起不來：把新的停掉、刪掉實例檔，**舊的照常服務**，這次部署失敗（站台檔不更新）。
+3. 起來了：`systemctl stop` 舊的位子（服務自己先排水再關）、刪掉它的實例檔、記下新的位子。
+
+開機時只有現在的位子有實例檔，`[Install]` 只套在它身上，所以只會起一份。站台檔兩個位子都列：
+
+```caddy
+reverse_proxy {
+	to <專案>-<服務>-a:8080 <專案>-<服務>-b:8080
+	lb_policy first
+	lb_try_duration 10s
+	health_uri /readyz
+	health_interval 1s
+}
+```
+
+沒在跑、還沒好、正在排水的那份健康檢查（`/readyz` 這類「要不要送流量」的端點，不要用外面監控用的那支）不過，edge-caddy 就不送；送不出去（連不上）在 `lb_try_duration` 內改送另一份。
+服務收到 SIGTERM 要先讓健康檢查失敗、照常服務幾秒（比 `health_interval` 長），再關；`StopTimeout` 要涵蓋這段時間。
+換位子時新舊兩份會同時跑幾秒：資料庫的 migration 只能「加」、兩份都要能處理同一筆資料。ouin-fx 的做法見它的
+[0018](https://github.com/MiskaWu/ouin-fx/blob/main/docs/decisions/0018-zero-downtime-deploy.md)。
 
 ## 日常操作
 
