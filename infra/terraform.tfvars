@@ -10,4 +10,9 @@ projects = {
     github_repo          = "ouin-fx"
     github_repository_id = "1407134684"
   }
+  # 光之籌備士（MiskaWu/quarter-master）。網域 quarter-master.miskawu.com 由 *.miskawu.com 萬用字元回答（docs/host-platform.md「網域」）
+  "quarter-master" = {
+    github_repo          = "quarter-master"
+    github_repository_id = "1412774898"
+  }
 }
