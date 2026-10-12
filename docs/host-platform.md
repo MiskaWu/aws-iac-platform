@@ -103,6 +103,21 @@ reverse_proxy {
 換位子時新舊兩份會同時跑幾秒：資料庫的 migration 只能「加」、兩份都要能處理同一筆資料。ouin-fx 的做法見它的
 [0018](https://github.com/MiskaWu/ouin-fx/blob/main/docs/decisions/0018-zero-downtime-deploy.md)。
 
+## 網域
+
+`miskawu.com` 的註冊商與 DNS 都在 **Cloudflare**（2026-10-12 定，比較過的方案：Cloudflare 全留＋萬用字元、委派子網域給 Route 53、
+寫成程式碼、整個搬到 AWS）。理由：在 Cloudflare 註冊的網域只能用 Cloudflare 的 DNS；whorl 等站用 Cloudflare Workers 的自訂網域，
+要求網域在 Cloudflare；註冊商和 DNS 在同一個帳號，要守的帳號只有一個。
+
+- **萬用字元**：`*.miskawu.com` 一筆 A 記錄指到主機的 Elastic IP（`host_public_ip`），**灰色雲**（DNS only：限流要看玩家真正的 IP）。
+  沒有自己記錄的子網域都由它回答，所以新的專案只要在部署包放站台檔就上線（Caddy 自己申請憑證），DNS 一筆都不用加。
+  打錯的名字會連到主機，但 edge-caddy 沒有那個站台就不給憑證、不回應。
+- **有自己記錄的名字照它自己的**：whorl、rpg、sim-gensokyo 是 Cloudflare 上的站（Workers 加自訂網域時 Cloudflare 自動建記錄、蓋過萬用字元）。
+- **安全設定**（Cloudflare 免費方案都有）：帳號兩步驟驗證、DNSSEC、防冒名寄信（`TXT v=spf1 -all`、`_dmarc` 的 `v=DMARC1; p=reject`、
+  null MX `0 .`；這個網域不收發信）、網域轉移鎖。限制發憑證的 CAA 還沒加（要加的話允許 `letsencrypt.org`）。
+- **主機換 IP**（換掉 Elastic IP 才會，平常換主機會沿用）：改 Cloudflare 上那一筆。真的常換、或要開第二台主機時，
+  再把一個子網域（例如 `edge`）委派給 Route 53、萬用字元改成 CNAME 指過去。
+
 ## 日常操作
 
 - **登入**：`aws ssm start-session --target <host_instance_id>`（本機要裝 session-manager-plugin），然後 `sudo -i`。
