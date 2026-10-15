@@ -72,6 +72,16 @@ data "aws_iam_policy_document" "host" {
     ]])
   }
 
+  # 平台自己的秘密（install.sh 同步成 podman secret）：/platform/CLOUDFLARE_API_TOKEN（edge-caddy 的 DNS-01）
+  statement {
+    sid     = "PlatformSecrets"
+    actions = ["ssm:GetParametersByPath", "ssm:GetParameter", "ssm:GetParameters"]
+    resources = [
+      "arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter/platform",
+      "arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter/platform/*",
+    ]
+  }
+
   # 平台檔案（_platform/）與各專案的部署包：只能讀
   statement {
     sid       = "ReadPlatformAndBundles"

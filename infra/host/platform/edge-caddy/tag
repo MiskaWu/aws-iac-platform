@@ -1,0 +1,3 @@
+# edge-caddy 用哪一個映像：ECR edge-caddy 的標籤（sha-<7 碼>，.github/workflows/edge-caddy.yml 推的）。
+# 空的就用官方的 docker.io/library/caddy:<Containerfile 的 CADDY_VERSION>（沒有 DNS-01，憑證照 HTTP-01／TLS-ALPN-01 申請）。
+# 換映像會重啟 edge-caddy：主機上所有站台斷幾秒（docs/host-platform.md「憑證」）。

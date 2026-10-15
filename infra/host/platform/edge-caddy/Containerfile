@@ -1,0 +1,15 @@
+# edge-caddy 的映像：官方 Caddy 加上 caddy-dns/cloudflare（DNS-01 申請憑證：DNS 是灰色雲、橘色雲都申請得到，
+# docs/host-platform.md「憑證」）。版本都釘死。
+#
+# 改了這個檔 → 合併後 .github/workflows/edge-caddy.yml 建好、推到 ECR 的 edge-caddy:sha-<7 碼> →
+# 另一個 PR 把 edge-caddy/tag 改成那個標籤，主機才換（install.sh）。CADDY_VERSION 也是官方映像的版本（tag 空的時候用它）。
+ARG CADDY_VERSION=2.11.7
+
+FROM docker.io/library/caddy:${CADDY_VERSION}-builder AS build
+# 建哪一版 Caddy：builder 映像自己的 CADDY_VERSION（環境變數，和上面的標籤同一版）
+RUN xcaddy build --with github.com/caddy-dns/cloudflare@v0.2.4
+
+FROM docker.io/library/caddy:${CADDY_VERSION}
+COPY --from=build /usr/bin/caddy /usr/bin/caddy
+# 建錯了（少了模組）在這裡就失敗，不會推上去
+RUN caddy list-modules | grep -qx dns.providers.cloudflare

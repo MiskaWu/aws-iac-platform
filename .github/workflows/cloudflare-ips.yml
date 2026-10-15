@@ -1,0 +1,36 @@
+# Cloudflare 的網段（infra/host/platform/cloudflare-ips）每週和官方清單比對一次：edge-caddy 只對這些網段採信 CF-Connecting-IP，
+# 網段變了而沒跟上的話，橘色雲時從新網段來的玩家全部被當成同幾個 IP（docs/host-platform.md「Cloudflare 代理」）。
+# 不一樣就失敗（GitHub 寄信），照輸出更新那個檔、開 PR。
+name: cloudflare-ips
+
+on:
+  schedule:
+    - cron: "17 2 * * 1" # 每週一 10:17（台北）
+  pull_request:
+    paths:
+      - "infra/host/platform/cloudflare-ips"
+      - ".github/workflows/cloudflare-ips.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: 和 https://www.cloudflare.com/ips/ 比對
+        run: |
+          set -euo pipefail
+          { curl -fsS --retry 3 https://www.cloudflare.com/ips-v4; echo; curl -fsS --retry 3 https://www.cloudflare.com/ips-v6; echo; } |
+            sed '/^$/d' | sort >"$RUNNER_TEMP/official"
+          sed '/^#/d;/^$/d' infra/host/platform/cloudflare-ips | sort >"$RUNNER_TEMP/ours"
+          if ! diff -u "$RUNNER_TEMP/ours" "$RUNNER_TEMP/official"; then
+            echo "::error::Cloudflare 的網段變了：照上面的 diff 更新 infra/host/platform/cloudflare-ips（+ 是官方有、我們沒有）"
+            exit 1
+          fi
+          echo "一致（$(wc -l <"$RUNNER_TEMP/ours") 個網段）"

@@ -21,7 +21,7 @@
                                 ├─ edge-caddy ──→ <專案>-<服務>:<埠>
                                 └─ 各專案自己的網路（資料庫只在這裡）
 
-ECR：每個專案一個倉庫　Parameter Store：/<專案>/<名稱>　S3：部署包、備份　SSM：PlatformSync、TenantDeploy
+ECR：每個專案一個倉庫、edge-caddy　Parameter Store：/<專案>/<名稱>、/platform/<名稱>　S3：部署包、備份　SSM：PlatformSync、TenantDeploy
 ```
 
 ## 為什麼這樣做
@@ -56,7 +56,7 @@ ECR：每個專案一個倉庫　Parameter Store：/<專案>/<名稱>　S3：部
 | 命名 | `quadlet/` 底下每個檔案與 drop-in 資料夾都以 `<專案>-` 開頭（或 `<專案>.`）；`ContainerName=`、`NetworkName=`、`VolumeName=` 也是。`tenant-deploy` 會擋不合的部署包 |
 | 對外的服務 | `Network=edge.network` 加 `NetworkAlias=<專案>-<服務>`，站台檔用這個別名當上游 |
 | 其他服務 | 只在專案自己的網路（`Internal=true` 的 `.network`）。**任何服務都不寫 `PublishPort=`**，對外一律經過 edge-caddy |
-| 來源 IP | 只信任 `172.30.0.2/32` 帶來的 `X-Forwarded-For`（取最右邊）。不能信任整段：`edge` 上還有別的專案的容器 |
+| 來源 IP | 站台檔的轉發加 `header_up X-Real-IP {client_ip}`（edge-caddy 算好的真實 IP，灰色雲、橘色雲都對，見「Cloudflare 代理」）；應用只在對端是 `172.30.0.2/32` 時讀它，沒帶才退回 `X-Forwarded-For` 最右邊（換版那幾秒舊站台檔轉來的請求）。不能信任整段：`edge` 上還有別的專案的容器 |
 | 秘密 | Parameter Store `/<專案>/<名稱>` 在每次部署時同步成 podman secret `<專案>_<名稱>`；單元用 `Secret=<專案>_<名稱>,type=env,target=<變數>`（同一個秘密可以給不同容器用不同的變數名） |
 | 每個環境不同的值 | 用 drop-in（例如 `<專案>-server.container.d/10-env.conf` 放 `Image=`），基本的單元檔各環境共用 |
 | 映像 | `<帳號>.dkr.ecr.<區域>.amazonaws.com/<專案>:<標籤>`，至少含 `linux/arm64`；不用 `podman login`。主機上已經有的映像不重拉（部署用的標籤不可覆寫） |
@@ -105,6 +105,10 @@ reverse_proxy {
 
 ## 網域
 
+對外的網域是 **`sinshot.com`**（社團 SinShot，2026-10-15 起）：`*.sinshot.com` 一筆萬用字元 A 記錄指到主機的 Elastic IP（灰色雲），
+規則和下面的 miskawu.com 一樣，負責人在 Cloudflare 加。`miskawu.com` 留著當搬家前的舊網址（各專案的交接期，例如 ouin-fx 的
+0021），一直續約、舊連結不會壞。新的專案用 `<專案>.sinshot.com`。
+
 `miskawu.com` 的註冊商與 DNS 都在 **Cloudflare**（2026-10-12 定，比較過的方案：Cloudflare 全留＋萬用字元、委派子網域給 Route 53、
 寫成程式碼、整個搬到 AWS）。理由：在 Cloudflare 註冊的網域只能用 Cloudflare 的 DNS；whorl 等站用 Cloudflare Workers 的自訂網域，
 要求網域在 Cloudflare；註冊商和 DNS 在同一個帳號，要守的帳號只有一個。
@@ -118,12 +122,79 @@ reverse_proxy {
 - **主機換 IP**（換掉 Elastic IP 才會，平常換主機會沿用）：改 Cloudflare 上那一筆。真的常換、或要開第二台主機時，
   再把一個子網域（例如 `edge`）委派給 Route 53、萬用字元改成 CNAME 指過去。
 
+## Cloudflare 代理（橘色雲）
+
+負責人 2026-10-15 要求：主機上的網址隨時可以從灰色雲（DNS only）切成橘色雲（Cloudflare 代理），**切換只改 DNS 那一筆記錄的雲朵**，
+不改程式、不重新部署；什麼時候切由他決定。交接期新舊網址的雲朵可能不同，所以每一項都要在兩種雲朵下同時成立。
+
+| 項目 | 灰色雲 | 橘色雲 | 由誰做到 |
+| --- | --- | --- | --- |
+| 真實 IP | 連進來的對端 | Cloudflare 給的 `CF-Connecting-IP` | 平台：`install.sh` 產生的 Caddyfile 全域 `servers { trusted_proxies static <cloudflare-ips> ; client_ip_headers CF-Connecting-IP }`，只對 Cloudflare 的網段採信那個標頭。`{client_ip}` 與存取紀錄的 `client_ip` 都照它 |
+| 應用拿到真實 IP | 同左 | 同左 | 專案：站台檔 `header_up X-Real-IP {client_ip}`，應用只在對端是 edge-caddy 時讀（「專案的約定」的來源 IP）。**不要**讀 `X-Forwarded-For` 最右邊當真實 IP：橘色雲時那是 Cloudflare |
+| 憑證 | DNS-01 | DNS-01 | 平台：見下面「憑證」。HTTP-01／TLS-ALPN-01 在代理後面申請不保險 |
+| 長連線 | 不限 | 約 100 秒沒資料會被切（Cloudflare 的 proxy read timeout，免費方案不能調） | 專案：SSE 這類長連線要有心跳（ouin-fx：行情每 100 毫秒、沒事件時每 15 秒 keep-alive） |
+| 快取 | 不經過 | 預設只快取帶靜態副檔名的檔案、照來源的 `Cache-Control`；HTML、API 不快取 | 專案：API、帶 `Set-Cookie` 的回應不要有靜態副檔名、不要給 `public`；圖片這類不變的資源給長的 `max-age`，正好讓 Cloudflare 接住 |
+| SSL 模式 | — | **Full (strict)**（Cloudflare 驗主機的憑證；主機的是 Let's Encrypt，有效） | 負責人在 Cloudflare 設定 |
+
+- **Cloudflare 的網段**在 `infra/host/platform/cloudflare-ips`（一行一個，IPv4、IPv6）。`.github/workflows/cloudflare-ips.yml`
+  每週一和 https://www.cloudflare.com/ips/ 比對，變了就失敗（GitHub 寄信），照 diff 更新、開 PR（只 reload，不斷線）。
+  比較過的：Caddy 的 `trusted_proxies cloudflare` 模組（自己定時抓網段）要多編一個第三方模組進拿著所有私鑰的入口，
+  網段幾年才變一次，用每週比對＋PR 換得到可以審查的變更。
+- **鎖住主機只收 Cloudflare 的連線**（安全群組 80、443 只開 Cloudflare 的網段）：要等主機上**每一個**網址都切成橘色雲才能做，
+  包括交接期的 `*.miskawu.com`；有任何一個還是灰色雲，鎖了它就連不上。到時在 `network.tf` 的安全群組改成 `cloudflare-ips` 的網段
+  （同一個檔，用 `file()` 讀），憑證照樣是 DNS-01、不受影響。這次不動。
+- 驗收（切之前，拿一個測試用的子網域切成橘色雲）：存取紀錄的 `client_ip` 與應用記到的是自己的 IP、不是 Cloudflare 的；限流只擋
+  單一玩家；SSE 撐過 5 分鐘不斷；憑證有效（Full (strict) 不報錯）；分享預覽正常。切回灰色雲再看一次。
+
+## 憑證（DNS-01）
+
+負責人 2026-10-15 定：edge-caddy 改用 DNS-01 申請憑證（在 Cloudflare 的 DNS 加一筆 `_acme-challenge` TXT 記錄證明網域是自己的）。
+它不需要連到主機，所以灰色雲、橘色雲、之後鎖住安全群組都申請得到。
+
+- 比較過的：HTTP-01／TLS-ALPN-01（現在的預設）在橘色雲下，TLS-ALPN-01 一定失敗（Cloudflare 終結 TLS），HTTP-01 會碰上
+  「Always Use HTTPS」之類的設定，續約不保險；鎖住安全群組之後 Let's Encrypt 連不進來，兩個都失敗。Cloudflare 的 Origin CA 憑證
+  只有 Cloudflare 信任，切回灰色雲時瀏覽器直接看到它就是無效的憑證，不符合「切換只改雲朵」。
+- **映像**：官方 Caddy 沒有 DNS 供應商的模組，要自己建：`infra/host/platform/edge-caddy/Containerfile`（官方 builder 加
+  `caddy-dns/cloudflare`，版本釘死）。`.github/workflows/edge-caddy.yml` 在 main 建好推到 ECR `edge-caddy:sha-<7 碼>`（只有 arm64，
+  原生的 arm runner），PR 只建。主機用哪一個寫在 `edge-caddy/tag`：**空的就是官方映像**（沒有 DNS-01）。
+  比較過的：在主機上建（t4g.small 的 2 GB 記憶體編 Go 會擠到正在跑的專案；新主機要先編完 edge 才起得來）、第三方建好的映像
+  （拿著所有私鑰的入口不用別人建的東西）。
+- **token**：負責人自己在 Cloudflare 建一把 API token，權限只給 **Zone → Zone → Read** 與 **Zone → DNS → Edit**，Zone Resources 只選
+  **sinshot.com 與 miskawu.com** 兩個 zone（caddy-dns/cloudflare 要 Zone Read 才找得到 zone）。放進 Parameter Store，不經過其他地方：
+
+  ```sh
+  aws ssm put-parameter --type SecureString --name /platform/CLOUDFLARE_API_TOKEN --value '<token>'
+  ```
+
+  `install.sh` 每次同步成 podman secret `platform_CLOUDFLARE_API_TOKEN`，edge-caddy 以環境變數讀（drop-in `20-cloudflare.conf`），
+  Caddyfile 的全域 `acme_dns cloudflare {env.CLOUDFLARE_API_TOKEN}`。主機只存雜湊（`/srv/edge/.secrets.sha256`），token 換了就重啟 edge-caddy。
+  **自建的映像與 token 兩樣都在才用 DNS-01**，少一樣就照舊（官方映像沒有 cloudflare 模組，設定會載入失敗）。
+- **miskawu.com 也一起改 DNS-01**：`acme_dns` 是全域的，主機上所有網址都照它申請；交接期 ouin-fx 的新舊網域在同一個站台，
+  分開設定要每個專案在站台檔各寫一份 `tls`、token 散到各專案。所以 token 涵蓋兩個 zone，一套規則。之後 miskawu.com 的網址也能切橘色雲。
+- **換上去那一次的影響**：`install.sh` 先把新映像拉好、用新映像把新的 Caddyfile（含所有專案的站台檔）驗過，拉不到或驗不過就停下來、
+  正在跑的 edge-caddy 不動；過了才換單元、**重啟 edge-caddy：主機上所有站台（ouin-fx、quarter-master）斷幾秒**，SSE 這類長連線
+  會斷一次（瀏覽器自己重連）。憑證在 `/srv/edge/data`，換映像不會重新申請；之後的續約才走 DNS-01。挑非熱門時段合併。
+- **退回**：PR 把 `edge-caddy/tag` 改回上一個標籤（ECR 留最近 10 個），或清空回官方映像（`acme_dns` 自動拿掉，憑證續約回到 HTTP-01／
+  TLS-ALPN-01；此時所有網址要是灰色雲）。一樣會重啟一次。token 不用刪。
+- **順序**（第一次）：
+  1. 這個 PR 合併：建 ECR `edge-caddy`、推映像的角色、主機讀 `/platform/*` 的權限；Caddyfile 加上 Cloudflare 的網段（只 reload）。
+     `tag` 是空的、沒有 token，所以憑證照舊。
+  2. 手動跑一次 `edge-caddy` workflow（`gh workflow run edge-caddy.yml --ref main`；同一次推送觸發的那一輪會在角色建好之前就跑、失敗，不用管它）。
+  3. 負責人建 token、寫進 Parameter Store（上面那行）。這一步不會觸發主機，下一次 PlatformSync 才同步。
+  4. 非熱門時段，PR 把 `edge-caddy/tag` 改成第 2 步的標籤，合併：PlatformSync 同步 token、換映像、重啟 edge-caddy。
+  5. 確認：`podman exec edge-caddy caddy list-modules | grep dns.providers.cloudflare`；`journalctl -u edge-caddy` 下一次申請或續約
+     看到 `dns-01`；拿一個新的子網域部署一次，看它申請得到憑證。
+- token 被撤銷或過期：申請、續約失敗，已經有的憑證照用到過期（Caddy 在剩三分之一效期時續約，90 天的憑證約有一個月可以處理）。
+  `journalctl -u edge-caddy` 會一直報錯；換一把寫進 Parameter Store，再跑一次 PlatformSync（`aws ssm start-associations-once`）。
+
 ## 日常操作
 
 - **登入**：`aws ssm start-session --target <host_instance_id>`（本機要裝 session-manager-plugin），然後 `sudo -i`。
   SSM 的環境沒有 `/snap/bin`：用 `aws` 之前先 `export PATH="$PATH:/snap/bin"`。
 - **改平台**（`infra/host/platform/` 底下任何檔案）：開 PR、合併。OpenTofu 上傳新檔案，association 的 `revision` 變了就重跑，
-  `install.sh` 只換有變的檔案：edge 的單元或 podman 設定變了才重啟 edge-caddy，只有 Caddyfile 變了就 reload。
+  `install.sh` 只換有變的檔案：edge 的單元、映像、token 或 podman 設定變了才重啟 edge-caddy，只有 Caddyfile 變了就 reload。
+- **升級 Caddy**：改 `edge-caddy/Containerfile` 的 `CADDY_VERSION`（和 `caddy-dns/cloudflare` 的版本）→ 合併後 workflow 推新映像 →
+  PR 改 `edge-caddy/tag`。`tag` 空的時候用的官方映像也跟著 `CADDY_VERSION`。
 - **換主機**（換 AMI、cloud-init 改了、主機壞了或失聯）：`infra/terraform.tfvars` 的 `host_generation` 加一，開 PR、看 plan
   （應該是主機與它的掛載、Elastic IP 的關聯被替換，資料碟、Elastic IP 不動）、合併。主機沒有開防誤刪：
   它本來就可以換掉，不能刪的資料碟與 Elastic IP 有 `prevent_destroy`。
@@ -147,6 +218,19 @@ cloud-init 與模擬器都讀它），apt 的設定也一樣不裝推薦套件�
 
 2026-10-08 用 ouin-fx 的部署包驗過：部署、SSE 經過 edge-caddy、資料庫不在 `edge` 上、每日備份、換主機後專案自己回來
 （資料與市場種子都在）、壞的站台檔與不合約定的檔名整包不生效。
+
+2026-10-15 驗過 Cloudflare 與 DNS-01（「Cloudflare 代理」「憑證」）：全域設定帶 Cloudflare 的網段、重跑不會白白重啟 edge-caddy；
+非 Cloudflare 來的連線帶假的 `CF-Connecting-IP`，存取紀錄的 `client_ip` 照樣是真正的對端；自建映像加 token 時 `acme_dns` 與
+drop-in 都在、token 以環境變數進到容器、專案照樣部署；映像拉不到時停下來、正在跑的 edge-caddy 不動；`tag` 清空退回官方映像。
+模擬器沒有 ECR，自建的映像要先建好載進去、標成假的倉庫位址：
+
+```sh
+podman build -t localhost/edge-caddy:test infra/host/platform/edge-caddy
+tests/host-sim/run.sh load localhost/edge-caddy:test
+tests/host-sim/run.sh exec podman tag localhost/edge-caddy:test 000000000000.dkr.ecr.ap-east-2.amazonaws.com/edge-caddy:sha-test
+printf '%s' '<40 個英數字的假 token>' | tests/host-sim/run.sh secret platform CLOUDFLARE_API_TOKEN
+echo sha-test >> infra/host/platform/edge-caddy/tag && tests/host-sim/run.sh sync   # 測完把 tag 改回來
+```
 
 ## 第一次套用之後要確認的
 

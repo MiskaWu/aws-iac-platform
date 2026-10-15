@@ -1,6 +1,9 @@
 github_owner    = "MiskaWu"
 github_owner_id = "37805889"
 
+# 這個 repo（MiskaWu/aws-infra）：CI 建 edge-caddy 的映像（edge-caddy.tf）
+platform_github_repository_id = "1408978994"
+
 # 平常 standard；在社群發文、流量可能突然湧進來時改 unlimited（2026-10-09～10-12 ouin-fx 發文期間用過，流量回落後改回）
 host_cpu_credits = "standard"
 

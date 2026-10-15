@@ -8,6 +8,22 @@ variable "github_owner_id" {
   type        = string
 }
 
+variable "platform_github_repo" {
+  description = "這個 repo（平台）的名稱：它的 CI 建 edge-caddy 的映像（edge-caddy.tf）。"
+  type        = string
+  default     = "aws-infra"
+}
+
+variable "platform_github_repository_id" {
+  description = "這個 repo 的數字 ID（gh api repos/OWNER/REPO --jq .id）。"
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9]+$", var.platform_github_repository_id))
+    error_message = "platform_github_repository_id 要填 repo 的數字 ID：gh api repos/OWNER/REPO --jq .id。"
+  }
+}
+
 variable "projects" {
   description = <<-EOT
     共用主機上的租戶。key 是專案名稱（小寫英數字與 -），加一筆就建好：ECR 倉庫、GitHub Actions 推映像的角色、
@@ -27,6 +43,11 @@ variable "projects" {
   validation {
     condition     = alltrue([for name in keys(var.projects) : can(regex("^[a-z0-9][a-z0-9-]*$", name))])
     error_message = "專案名稱只能有小寫英數字與 -（它同時是 ECR 倉庫、Parameter Store 路徑、主機上的資料夾名稱）。"
+  }
+
+  validation {
+    condition     = alltrue([for name in keys(var.projects) : !contains(["platform", "edge", "edge-caddy"], name)])
+    error_message = "platform、edge、edge-caddy 是平台自己用的名稱（Parameter Store /platform/、/srv/edge、ECR edge-caddy）。"
   }
 
   validation {

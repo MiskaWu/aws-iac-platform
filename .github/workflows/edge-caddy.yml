@@ -1,0 +1,86 @@
+# edge-caddy 的映像（官方 Caddy 加 caddy-dns/cloudflare，docs/host-platform.md「憑證」）：
+# infra/host/platform/edge-caddy/Containerfile 改了，PR 只建（確認建得起來、有 cloudflare 模組），main 建好推到 ECR edge-caddy:sha-<7 碼>。
+# 主機不會自己換：另一個 PR 把 infra/host/platform/edge-caddy/tag 改成那個標籤才換。
+# 主機是 arm64（t4g），只建 linux/arm64，在原生的 arm runner 上建。
+name: edge-caddy
+
+on:
+  pull_request:
+    paths:
+      - "infra/host/platform/edge-caddy/Containerfile"
+      - ".github/workflows/edge-caddy.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/host/platform/edge-caddy/Containerfile"
+      - ".github/workflows/edge-caddy.yml"
+  workflow_dispatch: # 第一次（ECR 倉庫與角色剛由 opentofu 建好）或推失敗時手動跑
+
+permissions:
+  contents: read
+
+concurrency:
+  group: edge-caddy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-east-2
+  # 帳號 ID 不是秘密（和 ouin-fx 的 CI 一樣寫在這裡）；角色由 infra/edge-caddy.tf 建，只信任 main 上的這份 workflow
+  ECR_REGISTRY: 123456789012.dkr.ecr.ap-east-2.amazonaws.com
+  EDGE_CADDY_PUSH_ROLE: arn:aws:iam::123456789012:role/github-ecr-push-edge-caddy
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write # OIDC 換 AWS 的短期憑證（PR 不推，不會用到）
+    env:
+      PUSH: ${{ github.event_name != 'pull_request' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: AWS 憑證（OIDC）
+        if: env.PUSH == 'true'
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ env.EDGE_CADDY_PUSH_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: 映像名稱與標籤
+        id: image
+        if: env.PUSH == 'true'
+        run: |
+          tag="sha-${GITHUB_SHA::7}"
+          echo "name=$ECR_REGISTRY/edge-caddy:$tag" >> "$GITHUB_OUTPUT"
+          # 標籤不可覆寫：這一顆已經推過（重新跑）就不再推
+          if aws ecr describe-images --repository-name edge-caddy --image-ids "imageTag=$tag" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: 登入 ECR
+        if: env.PUSH == 'true' && steps.image.outputs.exists != 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.ECR_REGISTRY }}
+      - name: 建置（main 推上去）
+        if: steps.image.outputs.exists != 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: infra/host/platform/edge-caddy
+          file: infra/host/platform/edge-caddy/Containerfile
+          platforms: linux/arm64
+          tags: ${{ steps.image.outputs.name || 'edge-caddy:pr' }}
+          push: ${{ env.PUSH == 'true' }}
+          cache-from: type=gha,scope=edge-caddy
+          cache-to: type=gha,scope=edge-caddy,mode=max
+          provenance: mode=max
+          sbom: true
+      - name: 下一步
+        if: env.PUSH == 'true'
+        env:
+          NAME: ${{ steps.image.outputs.name }}
+        run: |
+          echo "### edge-caddy 映像：\`$NAME\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "主機要換成它：開 PR 把 infra/host/platform/edge-caddy/tag 改成 \`${NAME##*:}\`（會重啟 edge-caddy，見 docs/host-platform.md「憑證」）。" >> "$GITHUB_STEP_SUMMARY"

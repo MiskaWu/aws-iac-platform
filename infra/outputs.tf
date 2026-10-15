@@ -21,6 +21,11 @@ output "ecr_push_role_arns" {
   value       = { for name, role in aws_iam_role.ecr_push : name => role.arn }
 }
 
+output "edge_caddy_push_role_arn" {
+  description = ".github/workflows/edge-caddy.yml 扮演它推映像（ARN 寫在 workflow 的 env）"
+  value       = aws_iam_role.edge_caddy_push.arn
+}
+
 output "deploy_bucket" {
   value = module.deploy_bucket.name
 }
