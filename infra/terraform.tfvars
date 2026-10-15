@@ -18,4 +18,9 @@ projects = {
     github_repo          = "quarter-master"
     github_repository_id = "1412774898"
   }
+  # SinShot 作品站與通行證（MiskaWu/sinshot）。網域 sinshot.com：根網址的 A 記錄由負責人加（灰色雲），www 由 *.sinshot.com 回答
+  "sinshot" = {
+    github_repo          = "sinshot"
+    github_repository_id = "1420498632"
+  }
 }
