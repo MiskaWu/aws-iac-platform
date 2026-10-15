@@ -65,7 +65,7 @@ ECR：每個專案一個倉庫、edge-caddy　Parameter Store：/<專案>/<名�
 | 資料碟依賴 | 不用自己寫：平台的頂層 drop-in 會替每個 `.container`、`.volume` 加 `RequiresMountsFor=/srv` |
 | 備份 | 每天 04:17（台北）以 root 執行 `/srv/<專案>/backup.sh`，stdout 寫到暫存檔、整份跑完才上傳成 `s3://platform-backups-…/<專案>/<UTC 時間>.dump`（留 35 天）。主機對備份 bucket 只能寫 |
 | 每小時的工作 | 每個整點過 2 分以 root 在 `/srv/<專案>/` 裡執行 `hourly.sh`（例如發報告），`AWS_REGION` 已經設好，讀得到 Parameter Store 的 `/<專案>/…`（主機角色本來就能讀，部署時同步秘密用的同一個權限）；最多跑 5 分鐘、錯過的不補跑。日誌：`journalctl -u tenant-hourly` |
-| 日誌 | journald：`journalctl -u <專案>-<服務>`（範本單元：`journalctl -u '<專案>-<服務>@*'`） |
+| 日誌 | journald：`journalctl -u <專案>-<服務>`（範本單元：`journalctl -u '<專案>-<服務>@*'`）。整台主機保留 **30 天**（見「日誌保留」），IP 不要另外寫到別的地方，隱私說明才寫得出天數 |
 
 `tenant-deploy` 的順序：在暫存區驗證整包（檔名、沒有符號連結、站台檔放進 Caddy 驗證整份設定）→ 寫進 `/srv/<專案>/` →
 同步秘密 → 拉映像 → 換單元、重啟有變的一般單元 → 範本單元換位子 → 確認服務都是 active → 放上站台檔、reload Caddy →
@@ -186,6 +186,18 @@ reverse_proxy {
      看到 `dns-01`；拿一個新的子網域部署一次，看它申請得到憑證。
 - token 被撤銷或過期：申請、續約失敗，已經有的憑證照用到過期（Caddy 在剩三分之一效期時續約，90 天的憑證約有一個月可以處理）。
   `journalctl -u edge-caddy` 會一直報錯；換一把寫進 Parameter Store，再跑一次 PlatformSync（`aws ssm start-associations-once`）。
+
+## 日誌保留
+
+主機上所有日誌（edge-caddy 的存取紀錄含 IP 與 User-Agent、各專案的服務、系統）保留 **30 天**，之後自動刪除
+（負責人 2026-10-15 定）。設定是 `infra/host/platform/journald.conf`：`MaxRetentionSec=30day`，再加 `MaxFileSec=1day`。
+journald 整個檔一起刪、檔裡最新的一筆也超過保留期才刪，預設一個檔最長一個月，不加這行實際會拖到將近 60 天。
+
+- **隱私說明可以寫**：伺服器存取紀錄（含 IP 位址、瀏覽器資訊）保留 30 天後自動刪除。所有專案同一個數字。
+- 平台上 IP 只在 journald：資料碟的每日快照只有 `/srv`（journald 在根碟），備份是各專案的資料庫。專案不要把 IP 寫進資料庫或
+  `/srv` 底下的檔案，要的話在自己的隱私說明另外寫。
+- 切成橘色雲之後，Cloudflare 也會照它自己的政策處理連線資料，隱私說明要另外提。
+- 比較過的天數：14 天（較嚴，但兩週後才回報的問題查不到）、90 天（流量報告用不到、說明不好看）。各專案的流量報告最多回頭看 7 天。
 
 ## 日常操作
 

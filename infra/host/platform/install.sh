@@ -39,6 +39,13 @@ was_changed() { # was_changed <前綴>…：有沒有任何變更的檔案以這
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
+# ---------- 日誌保留（30 天，docs/host-platform.md「日誌保留」）----------
+put "$src/journald.conf" /etc/systemd/journald.conf.d/10-platform.conf 644
+if was_changed /etc/systemd/journald.conf.d/; then
+  log "重啟 systemd-journald（保留天數）"
+  systemctl restart systemd-journald.service
+fi
+
 # ---------- podman ----------
 put "$src/storage.conf" /etc/containers/storage.conf 644
 printf '{\n  "credHelpers": {\n    "%s": "ecr-login"\n  }\n}\n' "$REGISTRY" >"$tmp/auth.json"
