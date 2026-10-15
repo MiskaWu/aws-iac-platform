@@ -72,6 +72,16 @@ data "aws_iam_policy_document" "host" {
     ]])
   }
 
+  # 寄信的角色（ses.tf）：主機 assume、臨時憑證交給有開 ses 的專案的容器（tenant-credentials）
+  dynamic "statement" {
+    for_each = length(local.ses_projects) > 0 ? [1] : []
+    content {
+      sid       = "AssumeSesRoles"
+      actions   = ["sts:AssumeRole"]
+      resources = [for name in keys(local.ses_projects) : "arn:${local.partition}:iam::${local.account_id}:role/platform-ses-${name}"]
+    }
+  }
+
   # 平台自己的秘密（install.sh 同步成 podman secret）：/platform/CLOUDFLARE_API_TOKEN（edge-caddy 的 DNS-01）
   statement {
     sid     = "PlatformSecrets"

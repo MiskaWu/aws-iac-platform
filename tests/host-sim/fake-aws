@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # 主機模擬器用的假 aws 指令：S3 是 /fake/s3/<bucket>/<key>，Parameter Store 是 /fake/ssm/<路徑>（檔案內容就是值）。
-# 只做平台腳本用到的：s3 sync、s3 cp、ssm get-parameters-by-path。
+# 只做平台腳本用到的：s3 sync、s3 cp、ssm get-parameters-by-path、sts assume-role（假的臨時憑證，1 小時效期）。
 import json
 import os
 import shutil
@@ -33,5 +33,11 @@ elif args[:2] == ["ssm", "get-parameters-by-path"]:
             with open(os.path.join(folder, name)) as f:
                 params.append({"Name": f"{path.rstrip('/')}/{name}", "Value": f.read().rstrip("\n")})
     print(json.dumps({"Parameters": params}))
+elif args[:2] == ["sts", "assume-role"]:
+    import datetime
+    role = args[args.index("--role-arn") + 1]
+    exp = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
+    print(json.dumps({"Credentials": {"AccessKeyId": "ASIAFAKE", "SecretAccessKey": "fake-secret", "SessionToken": f"fake-token-for-{role}",
+                                      "Expiration": exp.isoformat(timespec="seconds")}}))
 else:
     sys.exit(f"fake-aws: 沒有實作 {' '.join(sys.argv[1:])}")

@@ -26,6 +26,15 @@ output "edge_caddy_push_role_arn" {
   value       = aws_iam_role.edge_caddy_push.arn
 }
 
+output "ses_dkim_records" {
+  description = "寄件網域的 DKIM（CNAME，DNS only）：網域在 Cloudflare 就自己加；加好之後 SES 自己驗證（docs/host-platform.md「寄信（SES）」）"
+  value = {
+    for domain, id in aws_sesv2_email_identity.domain : domain => [
+      for t in id.dkim_signing_attributes[0].tokens : { name = "${t}._domainkey.${domain}", type = "CNAME", value = "${t}.dkim.amazonses.com" }
+    ]
+  }
+}
+
 output "deploy_bucket" {
   value = module.deploy_bucket.name
 }

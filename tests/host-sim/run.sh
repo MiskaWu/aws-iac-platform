@@ -17,6 +17,7 @@
 # 對外：https://localhost:28443、http://localhost:28080（HOST_SIM_HTTPS、HOST_SIM_HTTP 可改；站台檔的網域用 localhost，
 # Caddy 用自己簽的憑證）。
 # 和正式環境的差別：沒有 ECR、IAM、IMDS；aws 指令是假的（fake-aws）；不經過 cloud-init（/srv 是掛進來的資料夾）。
+# 寄信的臨時憑證：HOST_SIM_SES_PROJECTS="<專案> …" 當成開了 ses 的專案（fake-aws 給假的憑證）。
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -50,6 +51,8 @@ REGISTRY=000000000000.dkr.ecr.ap-east-2.amazonaws.com
 DEPLOY_BUCKET=$BUCKET
 BACKUP_BUCKET=$BACKUPS
 ACME_EMAIL=
+ACCOUNT_ID=000000000000
+SES_PROJECTS="${HOST_SIM_SES_PROJECTS:-}"
 EOF
 }
 

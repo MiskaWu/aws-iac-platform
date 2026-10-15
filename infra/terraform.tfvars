@@ -22,5 +22,7 @@ projects = {
   "sinshot" = {
     github_repo          = "sinshot"
     github_repository_id = "1420498632"
+    # 通行證的 email 驗證碼：noreply@sinshot.com，臨時憑證在 /srv/sinshot/aws/credentials.json（docs/host-platform.md「寄信（SES）」）
+    ses = { from_domain = "sinshot.com" }
   }
 }

@@ -137,10 +137,16 @@ put "$src/systemd/tenant-backup.timer" /etc/systemd/system/tenant-backup.timer 6
 put "$src/tenant-hourly" /usr/local/sbin/tenant-hourly 755
 put "$src/systemd/tenant-hourly.service" /etc/systemd/system/tenant-hourly.service 644
 put "$src/systemd/tenant-hourly.timer" /etc/systemd/system/tenant-hourly.timer 644
+put "$src/tenant-credentials" /usr/local/sbin/tenant-credentials 755
+put "$src/systemd/tenant-credentials.service" /etc/systemd/system/tenant-credentials.service 644
+put "$src/systemd/tenant-credentials.timer" /etc/systemd/system/tenant-credentials.timer 644
 
 systemctl daemon-reload
 systemctl enable --now tenant-backup.timer
 systemctl enable --now tenant-hourly.timer
+systemctl enable --now tenant-credentials.timer
+# 寄信的臨時憑證先換一次（開了 ses 的專案、或剛關掉的要刪檔）：失敗不擋平台，timer 15 分鐘後再試
+/usr/local/sbin/tenant-credentials || log "tenant-credentials 有專案失敗（journalctl -u tenant-credentials 看之後的重試）"
 
 # edge：單元、映像、token 或 podman 的設定改了就重啟（主機上所有站台斷幾秒）；只有 Caddyfile 改了就 reload（不斷線）
 if was_changed /etc/containers/systemd/ /etc/containers/storage.conf /etc/containers/platform-auth.json /srv/edge/.secrets.sha256; then

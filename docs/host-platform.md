@@ -64,6 +64,7 @@ ECR：每個專案一個倉庫、edge-caddy　Parameter Store：/<專案>/<名�
 | 換版不斷線（選配） | 對外的服務寫成**範本單元** `<專案>-<服務>@.container`（`ContainerName=<專案>-<服務>-%i`、`NetworkAlias=<專案>-<服務>-%i`，要有 `HealthCmd` 與 `Notify=healthy`）。平台平常只跑一份（`@a` 或 `@b`），換版時在另一個位子起新版、等它健康才關舊的。站台檔兩個位子都列、加健康檢查；服務收到 SIGTERM 要先讓健康檢查失敗幾秒（排水）再關。見下面「範本單元」 |
 | 資料碟依賴 | 不用自己寫：平台的頂層 drop-in 會替每個 `.container`、`.volume` 加 `RequiresMountsFor=/srv` |
 | 備份 | 每天 04:17（台北）以 root 執行 `/srv/<專案>/backup.sh`，stdout 寫到暫存檔、整份跑完才上傳成 `s3://platform-backups-…/<專案>/<UTC 時間>.dump`（留 35 天）。主機對備份 bucket 只能寫 |
+| 寄信（選配） | `projects` 填 `ses = { from_domain = "<網域>" }`：平台每 15 分鐘把只能用 `*@<網域>` 寄信的臨時憑證寫成 `/srv/<專案>/aws/credentials.json`（credential_process 格式、1 小時效期、所有人可讀）。要寄信的單元自己 `Volume=/srv/<專案>/aws:/run/aws:ro`，程式在 Expiration 前重讀。見「寄信（SES）」 |
 | 每小時的工作 | 每個整點過 2 分以 root 在 `/srv/<專案>/` 裡執行 `hourly.sh`（例如發報告），`AWS_REGION` 已經設好，讀得到 Parameter Store 的 `/<專案>/…`（主機角色本來就能讀，部署時同步秘密用的同一個權限）；最多跑 5 分鐘、錯過的不補跑。日誌：`journalctl -u tenant-hourly` |
 | 日誌 | journald：`journalctl -u <專案>-<服務>`（範本單元：`journalctl -u '<專案>-<服務>@*'`）。整台主機保留 **30 天**（見「日誌保留」），IP 不要另外寫到別的地方，隱私說明才寫得出天數 |
 
@@ -187,6 +188,34 @@ reverse_proxy {
 - token 被撤銷或過期：申請、續約失敗，已經有的憑證照用到過期（Caddy 在剩三分之一效期時續約，90 天的憑證約有一個月可以處理）。
   `journalctl -u edge-caddy` 會一直報錯；換一把寫進 Parameter Store，再跑一次 PlatformSync（`aws ssm start-associations-once`）。
 
+## 寄信（SES）
+
+負責人 2026-10-15 定（sinshot 通行證的 email 驗證碼，SPEC.md §8.1 甲案）：**帳號裡不放長期金鑰**，SMTP 帳密（IAM 使用者的金鑰）不用；
+容器拿不到主機的角色（IMDS 擋著），所以由平台替專案換臨時憑證。
+
+- **AWS 這邊**（`infra/ses.tf`）：`projects` 有填 `ses` 的專案各一個角色 `platform-ses-<專案>`，只信任主機角色，只能
+  `ses:SendEmail`、`ses:SendRawEmail`，條件 `ses:FromAddress` 限 `*@<from_domain>`。寄件網域在 **東京**（ap-northeast-1，台北沒有 SES）
+  建 Easy DKIM 的 identity。
+- **主機這邊**：`tenant-credentials`（`tenant-credentials.timer` 每 15 分鐘；`install.sh`、`tenant-deploy` 也先跑一次）assume 那個角色，
+  1 小時效期的憑證寫成 `/srv/<專案>/aws/credentials.json`：
+
+  ```json
+  {"Version": 1, "AccessKeyId": "…", "SecretAccessKey": "…", "SessionToken": "…", "Expiration": "2026-10-15T12:00:00Z"}
+  ```
+
+  先寫暫存檔再改名（讀的人不會讀到一半）；權限 444，容器裡不一定是 root。專案關掉 `ses` 之後，留下的檔案下一輪刪掉。
+  失敗不擋平台與部署：舊的憑證還有 45 分鐘，`journalctl -u tenant-credentials` 看重試。
+- **專案這邊**：要寄信的單元 `Volume=/srv/<專案>/aws:/run/aws:ro`，程式讀 `/run/aws/credentials.json`，**在 Expiration 之前（例如前 5 分鐘）
+  或檔案修改時間變了就重讀**。SDK 的共用憑證檔大多讀一次就快取、不會自己重讀，不要靠它；容器有 shell 的話可以用 SDK 的
+  `credential_process = cat /run/aws/credentials.json`。
+- 信任範圍：檔案所有人可讀，但主機上只有 root，別的專案的容器看不到 `/srv/<專案>/`（除非它的單元故意掛別人的資料夾，
+  平台信任主機上的專案都是自己的）。
+- **負責人要做的**（AWS 與 Cloudflare 的主控台）：
+  1. DKIM：`tofu output ses_dkim_records` 的三筆 CNAME 加到 Cloudflare（DNS only）。加好之後 SES 自己驗證，主控台的 identity 變成 Verified 才寄得出去。
+     寄件網域的 DMARC 是 `p=reject`、SPF 是 `-all` 也沒關係：SES 預設的 MAIL FROM 在 amazonses.com，DMARC 靠 DKIM 對齊就過。
+  2. 沙盒：新帳號的 SES 只能寄給驗證過的地址。正式寄給玩家前，在東京的 SES 主控台申請 production access（說明用途：通行證的驗證碼）。
+     核准之前先用驗證過的地址測。
+
 ## 日誌保留
 
 主機上所有日誌（edge-caddy 的存取紀錄含 IP 與 User-Agent、各專案的服務、系統）保留 **30 天**，之後自動刪除
@@ -243,6 +272,11 @@ tests/host-sim/run.sh exec podman tag localhost/edge-caddy:test 000000000000.dkr
 printf '%s' '<40 個英數字的假 token>' | tests/host-sim/run.sh secret platform CLOUDFLARE_API_TOKEN
 echo sha-test >> infra/host/platform/edge-caddy/tag && tests/host-sim/run.sh sync   # 測完把 tag 改回來
 ```
+
+`edge-caddy/tag` 有值時（2026-10-15 起正式用 `sha-b618851`），模擬器的 `up` 會停在「拉不到映像」：照上面建好、載入，
+標成 `000000000000.dkr.ecr.ap-east-2.amazonaws.com/edge-caddy:<tag 的值>` 再 `sync`。
+寄信的臨時憑證：`HOST_SIM_SES_PROJECTS="<專案>" tests/host-sim/run.sh up`（fake-aws 給假的憑證）。2026-10-15 驗過：
+憑證檔的格式、容器以 65532 讀得到、timer 有排上、專案關掉 ses 之後刪檔、重跑變更 0 個檔案。
 
 ## 第一次套用之後要確認的
 

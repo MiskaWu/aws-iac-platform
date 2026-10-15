@@ -31,6 +31,8 @@ locals {
     DEPLOY_BUCKET=${module.deploy_bucket.name}
     BACKUP_BUCKET=${module.backup_bucket.name}
     ACME_EMAIL=${var.acme_email}
+    ACCOUNT_ID=${local.account_id}
+    SES_PROJECTS="${join(" ", sort(keys(local.ses_projects)))}"
   EOT
 
   # 平台檔案任何一個改了，這個值就變，PlatformSync 的 association 跟著重跑

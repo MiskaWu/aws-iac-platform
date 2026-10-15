@@ -123,6 +123,11 @@ for img in "${images[@]}"; do
   podman pull -q "$img" >/dev/null
 done
 
+# 寄信的臨時憑證（開了 ses 的專案）：容器起來之前檔案就要在。失敗不擋部署，tenant-credentials.timer 15 分鐘後再試
+if [[ " ${SES_PROJECTS:-} " == *" $p "* ]]; then
+  /usr/local/sbin/tenant-credentials "$p" || echo "tenant-deploy: $p 的寄信憑證這次沒拿到，timer 會再試" >&2
+fi
+
 # ---------- 4. 安裝單元、只重啟需要的服務 ----------
 # 一般單元（<名稱>.container）：只有它自己的檔案或 drop-in 變了、秘密變了、或沒在跑才重啟（只換站台檔、backup.sh、
 # hourly.sh 時線上的人不會斷線；只換了伺服器的映像時資料庫不會跟著重啟）。.network、.volume 這類變了就全部重啟。

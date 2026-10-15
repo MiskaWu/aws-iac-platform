@@ -27,7 +27,7 @@ variable "platform_github_repository_id" {
 variable "projects" {
   description = <<-EOT
     共用主機上的租戶。key 是專案名稱（小寫英數字與 -），加一筆就建好：ECR 倉庫、GitHub Actions 推映像的角色、
-    主機讀 Parameter Store /<專案>/* 與部署包的權限、寫備份的權限，以及（有填 dns 時）DNS 記錄。
+    主機讀 Parameter Store /<專案>/* 與部署包的權限、寫備份的權限，以及（有填 dns 時）DNS 記錄、（有填 ses 時）寄信的角色與東京的寄件網域。
     租戶要遵守的約定見 docs/host-platform.md。
   EOT
   type = map(object({
@@ -37,6 +37,9 @@ variable "projects" {
     dns = optional(object({
       zone_id = string       # Route 53 的 hosted zone ID（網域在別家就不要填 dns，自己把 A 記錄指到 host_public_ip）
       names   = list(string) # 例如 ["fx.example.com"]
+    }))
+    ses = optional(object({
+      from_domain = string # 寄信（SES，東京）：只能用這個網域的地址寄；臨時憑證在 /srv/<專案>/aws/credentials.json（ses.tf）
     }))
   }))
 

@@ -61,6 +61,7 @@ resource "aws_ssm_association" "platform_sync" {
     aws_s3_object.platform_env,
     aws_volume_attachment.data,
     aws_iam_role_policy.host,
+    aws_iam_role_policy.ses, # tenant-credentials 第一次就 assume 得到
   ]
 }
 
