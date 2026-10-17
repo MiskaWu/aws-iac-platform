@@ -25,4 +25,9 @@ projects = {
     # 通行證的 email 驗證碼：noreply@sinshot.com，臨時憑證在 /srv/sinshot/aws/credentials.json（docs/host-platform.md「寄信（SES）」）
     ses = { from_domain = "sinshot.com" }
   }
+  # Vroop（MiskaWu/vroop，翻轉迴圈小遊戲）。網域 vroop.sinshot.com 由 *.sinshot.com 萬用字元回答（docs/host-platform.md「網域」）
+  "vroop" = {
+    github_repo          = "vroop"
+    github_repository_id = "1423424663"
+  }
 }
