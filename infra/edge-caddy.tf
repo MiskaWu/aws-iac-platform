@@ -65,10 +65,10 @@ data "aws_iam_policy_document" "edge_caddy_push_trust" {
     condition {
       test     = "StringLike"
       variable = "${local.oidc_host}:sub"
-      values = [
-        "repo:${var.github_owner}/${var.platform_github_repo}:ref:refs/heads/main",
-        "repo:${var.github_owner}@${var.github_owner_id}/${var.platform_github_repo}@${var.platform_github_repository_id}:ref:refs/heads/main",
-      ]
+      values = flatten([for o in var.github_owners : [
+        "repo:${o.name}/${var.platform_github_repo}:ref:refs/heads/main",
+        "repo:${o.name}@${o.id}/${var.platform_github_repo}@${var.platform_github_repository_id}:ref:refs/heads/main",
+      ]])
     }
 
     condition {
@@ -80,14 +80,14 @@ data "aws_iam_policy_document" "edge_caddy_push_trust" {
     condition {
       test     = "StringLike"
       variable = "${local.oidc_host}:job_workflow_ref"
-      values   = ["${var.github_owner}/${var.platform_github_repo}/.github/workflows/edge-caddy.yml@refs/heads/main"]
+      values   = [for o in var.github_owners : "${o.name}/${var.platform_github_repo}/.github/workflows/edge-caddy.yml@refs/heads/main"]
     }
   }
 }
 
 resource "aws_iam_role" "edge_caddy_push" {
   name                 = "github-ecr-push-edge-caddy"
-  description          = "Push the edge-caddy image to ECR from GitHub Actions: ${var.github_owner}/${var.platform_github_repo}"
+  description          = "Push the edge-caddy image to ECR from GitHub Actions: ${join(", ", [for o in var.github_owners : "${o.name}/${var.platform_github_repo}"])}"
   assume_role_policy   = data.aws_iam_policy_document.edge_caddy_push_trust.json
   max_session_duration = 3600
 }
