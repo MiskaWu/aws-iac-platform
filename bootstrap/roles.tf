@@ -43,7 +43,7 @@ data "aws_iam_policy_document" "apply_trust" {
       content {
         test     = "StringEquals"
         variable = "${local.oidc_host}:job_workflow_ref"
-        values   = ["${local.repo_full}/${condition.value}@refs/heads/${var.apply_branch}"]
+        values   = [for r in local.repo_fulls : "${r}/${condition.value}@refs/heads/${var.apply_branch}"]
       }
     }
   }
@@ -51,7 +51,7 @@ data "aws_iam_policy_document" "apply_trust" {
 
 resource "aws_iam_role" "apply" {
   name                 = "github-tofu-apply"
-  description          = "OpenTofu apply from GitHub Actions: ${local.repo_full} branch ${var.apply_branch}"
+  description          = "OpenTofu apply from GitHub Actions: ${join(", ", local.repo_fulls)} branch ${var.apply_branch}"
   assume_role_policy   = data.aws_iam_policy_document.apply_trust.json
   max_session_duration = 3600
 }
@@ -104,7 +104,7 @@ data "aws_iam_policy_document" "plan_trust" {
 
 resource "aws_iam_role" "plan" {
   name                 = "github-tofu-plan"
-  description          = "OpenTofu plan from GitHub Actions pull requests: ${local.repo_full}"
+  description          = "OpenTofu plan from GitHub Actions pull requests: ${join(", ", local.repo_fulls)}"
   assume_role_policy   = data.aws_iam_policy_document.plan_trust.json
   max_session_duration = 3600
 }
