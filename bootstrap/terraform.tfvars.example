@@ -1,8 +1,10 @@
 # 複製成 terraform.tfvars 後填入。這個檔案沒有機密，可以 commit。
 # 兩個 ID 用這行查：gh api repos/OWNER/REPO --jq '.owner.id, .id'
+# 擁有者平常只有一個；repo 要移轉到別的擁有者時，搬家期間兩個都列（見 variables.tf）。
 
-github_owner         = "your-github-username"
-github_owner_id      = "1234567"
+github_owners = [
+  { name = "your-github-username", id = "1234567" },
+]
 github_repo          = "aws-infra"
 github_repository_id = "987654321"
 

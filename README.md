@@ -63,7 +63,7 @@ plan 角色把最後一條換成 `ref` 必須是 `refs/pull/*/merge`，用來排
 
 ### 1. 本機準備
 
-`bootstrap/terraform.tfvars` 已經填好 `MiskaWu/aws-infra` 的名稱和數字 ID。這個 repo 建立於 2026-10-07，GitHub 發出的 OIDC `sub` 會是含 ID 的新格式。
+`bootstrap/terraform.tfvars` 已經填好擁有者（`github_owners`）與 repo 的名稱和數字 ID。這個 repo 建立於 2026-10-07，GitHub 發出的 OIDC `sub` 會是含 ID 的新格式。2026-10 起搬到組織 `sinshotgames`，搬家期間新舊兩個擁有者都列著，見 [docs/org-migration.md](docs/org-migration.md)。
 
 兩邊的 provider 鎖檔也已經 commit（見「工具版本」），CloudShell、PR 的 plan、main 的 apply 會用同一版 provider。本機不需要再做什麼，直接到 CloudShell。
 
@@ -130,6 +130,8 @@ CloudShell 的家目錄只有 1 GB，Makefile 已把 provider 放到 `/tmp`。Op
 ### 之後要改 bootstrap
 
 在 CloudShell 用同樣方式取得程式碼（或 `git pull`），然後 `make plan`、`make apply`。state 已經在 S3，不需要再 migrate。
+
+repo 要移轉到別的擁有者（使用者或組織）時，先在 `github_owners` 加上新的擁有者套用一次、再移轉、最後拿掉舊的再套用一次，CI 才不會斷（docs/org-migration.md）。
 
 ## IAM Identity Center（日常登入）
 
