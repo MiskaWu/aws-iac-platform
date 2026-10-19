@@ -26,14 +26,17 @@ AWS 這邊每個「GitHub Actions 換權限」的角色都綁著擁有者名稱�
 
 ## 步驟
 
-- [ ] **1. bootstrap 同時信任兩個擁有者**（分支 `migrate-org-bootstrap`）
+- [x] **1. bootstrap 同時信任兩個擁有者**（PR #6，2026-10-19 CloudShell 套用；`aws iam get-role` 查過兩個角色都有新舊兩組條件）
   - `bootstrap/variables.tf`：`github_owner`／`github_owner_id` → `github_owners`（清單）。
   - 預期的 plan：`github-tofu-apply`、`github-tofu-plan` 兩個角色 **in-place 更新**（信任政策多 sinshotgames 的兩種 sub
     與 job_workflow_ref、description），沒有新增或刪除。原本 MiskaWu 的條件一字不差地留著。
   - 套用：CloudShell（東京）`git fetch && git checkout migrate-org-bootstrap && make plan && make apply`，再把 PR 合併。
-- [ ] **2. 移轉 aws-infra** 到 sinshotgames（repo 的 Settings → Danger Zone → Transfer）。
-  移轉後確認：Actions variables（`AWS_APPLY_ROLE_ARN`／`AWS_PLAN_ROLE_ARN`）、main 的保護規則、CloudShell 的 deploy key 都跟著過去。
-- [ ] **3. infra 同時信任兩個擁有者**（`infra/variables.tf` 的 `github_owner` 同樣改成清單）：PR → plan → 合併 → apply。
+- [x] **2. 移轉 aws-infra** 到 sinshotgames（repo 的 Settings → Danger Zone → Transfer；2026-10-19）。
+  移轉後確認過：repository ID 不變（1408978994）、Actions variables 兩個都在、Actions 開著。
+  注意：main **本來就沒有保護規則**（私人 repo 的分支保護要 GitHub Pro，個人與組織的免費方案都沒有），README 寫的「規定走 PR」是靠自律。
+  本機 gh 的 fine-grained 權杖只能綁一個擁有者：另建一把綁 sinshotgames 的（Checks 權限 fine-grained 權杖選不到）。
+- [ ] **3. infra 同時信任兩個擁有者**（分支 `migrate-org-infra`，`infra/variables.tf` 的 `github_owner` 同樣改成清單）：PR → plan → 合併 → apply。
+  預期的 plan：`github-ecr-push-<專案>`（ouin-fx、quarter-master、sinshot、vroop）與 `github-ecr-push-edge-caddy` 五個角色 in-place 更新，沒有新增刪除。
   這是 aws-infra 搬進組織之後第一次跑 CI，順便確認組織的雲端分鐘數能用。
 - [ ] **4. 逐一移轉其他私人 repo**：quarter-master、ouin-fx、sinshot、vroop、hyaku-monogatari。
   每個移轉完：CI 推得了映像（main 上推一次或重跑），有正式站的跑一次部署確認。

@@ -1,11 +1,20 @@
-variable "github_owner" {
-  description = "GitHub 使用者名稱，大小寫要和 GitHub 上完全一致。"
-  type        = string
-}
+variable "github_owners" {
+  description = <<-EOT
+    repo 的擁有者（GitHub 使用者或組織）：name 的大小寫要和 GitHub 上完全一致；id 是不可變的數字 ID
+    （gh api users/NAME --jq .id），2026-07-15 之後建立、改名或移轉的 repo，OIDC sub 會帶這個 ID。
+    平常只有一個。repo 移轉到別的擁有者時（2026-10 MiskaWu → 組織 sinshotgames，docs/org-migration.md），
+    先把新的加進來套用、再移轉 repo、最後拿掉舊的 —— 移轉的那一刻新舊兩邊都扮演得到，CI 不會斷。
+    repository_id 移轉後不變，所以多一個擁有者不會讓別人的同名 repo 冒用。同 bootstrap/variables.tf。
+  EOT
+  type = list(object({
+    name = string
+    id   = string
+  }))
 
-variable "github_owner_id" {
-  description = "Owner 的不可變數字 ID（gh api users/OWNER --jq .id）。2026-07-15 之後建立的 repo，OIDC sub 會帶這個 ID。"
-  type        = string
+  validation {
+    condition     = length(var.github_owners) > 0
+    error_message = "至少要有一個擁有者。"
+  }
 }
 
 variable "platform_github_repo" {

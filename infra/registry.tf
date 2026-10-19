@@ -84,10 +84,11 @@ data "aws_iam_policy_document" "ecr_push_trust" {
     condition {
       test     = "StringLike"
       variable = "${local.oidc_host}:sub"
-      values = flatten([for prefix in [
-        "repo:${var.github_owner}/${each.value.github_repo}",
-        "repo:${var.github_owner}@${var.github_owner_id}/${each.value.github_repo}@${each.value.github_repository_id}",
-      ] : ["${prefix}:ref:refs/heads/main", "${prefix}:ref:refs/tags/v*"]])
+      # 每個擁有者（移轉期間有兩個，見 variables.tf 的 github_owners）各兩種格式，各自允許 main 與 v* 標籤
+      values = flatten([for o in var.github_owners : [for prefix in [
+        "repo:${o.name}/${each.value.github_repo}",
+        "repo:${o.name}@${o.id}/${each.value.github_repo}@${each.value.github_repository_id}",
+      ] : ["${prefix}:ref:refs/heads/main", "${prefix}:ref:refs/tags/v*"]]])
     }
 
     condition {
@@ -99,10 +100,10 @@ data "aws_iam_policy_document" "ecr_push_trust" {
     condition {
       test     = "StringLike"
       variable = "${local.oidc_host}:job_workflow_ref"
-      values = [
-        "${var.github_owner}/${each.value.github_repo}/${each.value.push_workflow}@refs/heads/main",
-        "${var.github_owner}/${each.value.github_repo}/${each.value.push_workflow}@refs/tags/v*",
-      ]
+      values = flatten([for o in var.github_owners : [
+        "${o.name}/${each.value.github_repo}/${each.value.push_workflow}@refs/heads/main",
+        "${o.name}/${each.value.github_repo}/${each.value.push_workflow}@refs/tags/v*",
+      ]])
     }
   }
 }
@@ -111,7 +112,7 @@ resource "aws_iam_role" "ecr_push" {
   for_each = var.projects
 
   name                 = "github-ecr-push-${each.key}"
-  description          = "Push images to ECR ${each.key} from GitHub Actions: ${var.github_owner}/${each.value.github_repo}"
+  description          = "Push images to ECR ${each.key} from GitHub Actions: ${join(", ", [for o in var.github_owners : "${o.name}/${each.value.github_repo}"])}"
   assume_role_policy   = data.aws_iam_policy_document.ecr_push_trust[each.key].json
   max_session_duration = 3600
 }
